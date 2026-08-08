@@ -78,8 +78,8 @@ def node_ground(state: QEState) -> dict:
     spec = _fetch_openapi(config.sut_base_url())
     warnings = security.scan_artifact(spec)
     spotlighted = security.spotlight(spec)
-    run_dir = config.RUNS_DIR / time.strftime("%Y%m%d-%H%M%S")
-    run_dir.mkdir(parents=True, exist_ok=True)
+    run_dir = config.RUNS_DIR / f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid4().hex}"
+    run_dir.mkdir(parents=True)
     (run_dir / "openapi.json").write_text(spec)
 
     llm = get_llm("grounder").with_structured_output(SystemModel)
