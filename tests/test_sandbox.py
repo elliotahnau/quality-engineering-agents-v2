@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from qe_agent.sandbox import NETWORK, SUT_ALIAS_URL, parse_junit, runner_cmd, write_test_dir
 
 JUNIT_XML = """<?xml version="1.0" encoding="utf-8"?>
@@ -72,3 +74,19 @@ def test_runner_cmd_isolation_contract(tmp_path: Path):
     assert "-p" not in docker_args and "--publish" not in docker_args
     assert "--privileged" not in docker_args
     assert "host" not in docker_args
+
+
+def test_generated_test_file_name_is_forced_to_a_safe_basename():
+    """file_name is LLM output that becomes a host path in both the sandbox
+    and the CLI review flow, so the schema itself normalizes it."""
+    from pydantic import ValidationError
+
+    from qe_agent.schemas import GeneratedTest
+
+    escaped = GeneratedTest(scenario_id="TS-001", file_name="../../etc/test_evil.py", code="x = 1")
+    assert escaped.file_name == "test_evil.py"
+    absolute = GeneratedTest(scenario_id="TS-001", file_name="/tmp/test_x.py", code="x = 1")
+    assert absolute.file_name == "test_x.py"
+    for bad in ("..", "", "notpython.txt"):
+        with pytest.raises(ValidationError):
+            GeneratedTest(scenario_id="TS-001", file_name=bad, code="x = 1")
