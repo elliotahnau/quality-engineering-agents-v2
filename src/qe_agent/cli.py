@@ -142,10 +142,10 @@ def _exit_code(result: dict) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    _start_sut()
-    graph = build_graph()
-    thread = {"configurable": {"thread_id": uuid.uuid4().hex}}
     try:
+        _start_sut()
+        graph = build_graph()
+        thread = {"configurable": {"thread_id": uuid.uuid4().hex}}
         print(f"grounding on live spec: {config.sut_base_url()}/openapi.json")
         result = graph.invoke({"auto_approve": args.auto}, thread)
         while "__interrupt__" in result:
