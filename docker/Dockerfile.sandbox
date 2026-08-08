@@ -1,0 +1,16 @@
+# Shared image for the two sandbox containers:
+#  - qe-sut     : runs the SUT (uvicorn) with sut/ mounted read-only
+#  - qe-runner  : runs generated pytest modules on the internal-only network
+FROM python:3.12-slim
+
+RUN pip install --no-cache-dir \
+    "fastapi>=0.115.0" \
+    "uvicorn>=0.34.0" \
+    "pydantic>=2.9.0" \
+    "pytest>=8.3.0" \
+    "httpx>=0.28.0"
+
+RUN useradd --create-home sandbox
+USER sandbox
+WORKDIR /work
+ENV PYTHONDONTWRITEBYTECODE=1
