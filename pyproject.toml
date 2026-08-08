@@ -1,0 +1,67 @@
+[project]
+name = "qe-agent"
+version = "0.1.0"
+description = "LangGraph multi-agent QE framework testing an ad-ops SUT with planted bugs"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.34.0",
+    "pydantic>=2.9.0",
+    "httpx>=0.28.0",
+    "langgraph>=0.2.60",
+    "langchain-core>=0.3.30",
+    "langchain-google-genai>=2.0.8",
+    "langchain-openai>=0.3.0",
+    "python-dotenv>=1.0.1",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+demo = [
+    "notebook>=7.0",
+    "ipykernel>=6.29",
+]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.25.0",
+    "respx>=0.22.0",
+    "ruff>=0.9.0",
+    "black>=24.10.0",
+]
+
+[project.scripts]
+qe = "qe_agent.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/qe_agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+pythonpath = ["."]  # so tests can import the sut package without install tricks
+markers = [
+    "integration: full graph runs against a live SUT + live LLM (needs API key)",
+]
+# integration runs are opt-in: pytest -m integration
+addopts = "-m 'not integration'"
+filterwarnings = [
+    # schema classes named Test* are Pydantic models, not test classes
+    "ignore::pytest.PytestCollectionWarning",
+]
+
+# ruff for linting, black for formatting
+[tool.ruff]
+line-length = 100
+src = ["src", "tests", "sut", "eval"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]  # line length is black's job
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
