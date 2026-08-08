@@ -15,12 +15,10 @@ Exit codes (SDLC integration): 0 = no real defects, 2 = real defects found,
 
 import argparse
 import sys
-import time
 import uuid
 from pathlib import Path
 from urllib.parse import urlparse
 
-import httpx
 from langgraph.types import Command
 
 from qe_agent import config, sandbox
@@ -28,19 +26,9 @@ from qe_agent.graph import build_graph
 
 
 def _start_sut() -> None:
-    url = config.sut_base_url()
-    port = urlparse(url).port or 8000
+    port = urlparse(config.sut_base_url()).port or 8000
     sandbox.ensure_infra()
-    sandbox.start_sut_container(host_port=port)
-    deadline = time.monotonic() + 20
-    while time.monotonic() < deadline:
-        try:
-            if httpx.get(f"{url}/health", timeout=1.0).status_code == 200:
-                return
-        except httpx.HTTPError:
-            time.sleep(0.4)
-    sandbox.stop_sut_container()
-    raise RuntimeError(f"SUT container did not become healthy at {url}")
+    sandbox.start_sut_container(host_port=port)  # blocks until /health is up
 
 
 def _resolve_ambiguities(payload: dict) -> dict:
