@@ -12,6 +12,7 @@ assumptions in --auto mode).
 
 import json
 import time
+from uuid import uuid4
 
 import httpx
 from langchain_core.messages import HumanMessage, SystemMessage
