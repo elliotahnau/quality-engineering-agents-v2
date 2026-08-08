@@ -38,7 +38,10 @@ def _resolve_ambiguities(payload: dict) -> dict:
         print(f"\n[{item['id']}] {item['question']}")
         print(f"  context:    {item['context']}")
         print(f"  assumption: {item['assumption']}")
-        reply = input("  your answer (empty = accept assumption): ").strip()
+        try:
+            reply = input("  your answer (empty = accept assumption): ").strip()
+        except EOFError:
+            reply = ""
         answers[item["id"]] = reply or f"accepted assumption: {item['assumption']}"
     return answers
 
