@@ -1,0 +1,9 @@
+# Endpoint ownership map, given to the triage agent to suggest a defect owner.
+owners:
+  - prefix: /campaigns/{id}/metrics
+    owner: analytics-team
+  - prefix: /reports
+    owner: reporting-team
+  - prefix: /campaigns
+    owner: campaign-core-team
+default_owner: platform-team
