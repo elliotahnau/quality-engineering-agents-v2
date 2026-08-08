@@ -93,10 +93,11 @@ def node_generate(state: QEState) -> dict:
         regenerated.extend(result.tests)
 
     if feedback:
-        regenerated_ids = {t.scenario_id for t in regenerated}
-        kept = [
-            t for t in (state.get("generated_tests") or []) if t.scenario_id not in regenerated_ids
-        ]
+        # drop by the scenarios we were ASKED to redo, not by what came back:
+        # a scenario the model failed to return must not silently keep the
+        # version the reviewer just rejected.
+        target_ids = {s.id for s in targets}
+        kept = [t for t in (state.get("generated_tests") or []) if t.scenario_id not in target_ids]
         tests = kept + regenerated
     else:
         tests = regenerated

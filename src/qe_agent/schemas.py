@@ -4,9 +4,10 @@ schemas handed to the LLM, so field descriptions works as prompt guidance.
 """
 
 from enum import Enum
+from pathlib import PurePosixPath
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class RiskLevel(str, Enum):
@@ -101,6 +102,16 @@ class GeneratedTest(BaseModel):
     scenario_id: str
     file_name: str = Field(description="e.g. test_ts_001_budget_validation.py")
     code: str = Field(description="Complete pytest module source")
+
+    @field_validator("file_name")
+    @classmethod
+    def _single_safe_segment(cls, value: str) -> str:
+        """file_name is LLM output that later becomes a host path — reduce it to
+        a bare basename here so no consumer can be walked out of its directory."""
+        name = PurePosixPath(value.replace("\\", "/")).name
+        if not name or name in (".", "..") or not name.endswith(".py"):
+            raise ValueError(f"unsafe or non-python test file name: {value!r}")
+        return name
 
 
 class GeneratedTestBatch(BaseModel):

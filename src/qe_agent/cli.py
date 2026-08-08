@@ -97,7 +97,10 @@ def _review_tests(payload: dict) -> dict:
             review_dir.mkdir(parents=True, exist_ok=True)
             for f in files:
                 (review_dir / f["file_name"]).write_text(f["code"])
-            input(f"files written to {review_dir} — edit them, then press Enter... ")
+            try:
+                input(f"files written to {review_dir} — edit them, then press Enter... ")
+            except EOFError:
+                return {"action": "abort"}
             changed = {}
             for f in files:
                 new_code = (review_dir / f["file_name"]).read_text()

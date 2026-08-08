@@ -106,10 +106,16 @@ def node_execute(state: QEState) -> dict:
         rerun = runner.run(test_dir, node_ids=failing)
         still_failing = []
         for node_id in failing:
+            case = results[node_id]
             outcome = rerun.get(node_id)
             if outcome is None:
+                # the runner did not report a test we asked it to rerun (crashed
+                # container, missing report). Record it rather than dropping the
+                # attempt — triage reads attempt history to judge flakiness.
+                case.attempts.append("error")
+                case.message = case.message or "no result returned by sandbox rerun"
+                still_failing.append(node_id)
                 continue
-            case = results[node_id]
             case.attempts.append(outcome.outcome)
             if outcome.outcome in ("failed", "error"):
                 case.message = outcome.message or case.message

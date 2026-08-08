@@ -104,8 +104,43 @@ def _cluster_recovered(cluster: FailureCluster, execution: ExecutionReport) -> b
     return bool(cases) and all(c.attempts[-1] == "passed" for c in cases)
 
 
+DEFAULT_OWNERS_TEXT = "owners: []\ndefault_owner: platform-team\n"
+
+
 def load_owners(path: Path) -> str:
-    return path.read_text() if path.exists() else "default_owner: platform-team"
+    return path.read_text() if path.exists() else DEFAULT_OWNERS_TEXT
+
+
+def parse_owners(text: str) -> tuple[list[tuple[str, str]], str]:
+    """Validate the ownership map into (prefix, owner) rules + a default.
+
+    Raises on a malformed map: an unusable ownership map would silently route
+    every defect to whatever the model invented."""
+    data = yaml.safe_load(text) or {}
+    default_owner = data.get("default_owner")
+    if not isinstance(default_owner, str) or not default_owner.strip():
+        raise ValueError("ownership map needs a non-empty 'default_owner'")
+    rules = []
+    for entry in data.get("owners") or []:
+        prefix, owner = entry.get("prefix"), entry.get("owner")
+        if not isinstance(prefix, str) or not prefix.strip():
+            raise ValueError(f"ownership entry missing 'prefix': {entry!r}")
+        if not isinstance(owner, str) or not owner.strip():
+            raise ValueError(f"ownership entry missing 'owner': {entry!r}")
+        rules.append((prefix.strip(), owner.strip()))
+    # longest prefix wins, so specific paths beat their parents
+    rules.sort(key=lambda rule: len(rule[0]), reverse=True)
+    return rules, default_owner.strip()
+
+
+def resolve_owner(endpoint: str, rules: list[tuple[str, str]], default_owner: str) -> str:
+    """Map an endpoint to an owner deterministically (longest prefix wins)."""
+    path = endpoint.split(" ", 1)[-1].strip()
+    normalized = re.sub(r"\{[^}]*\}", "{id}", path)
+    for prefix, owner in rules:
+        if normalized.startswith(re.sub(r"\{[^}]*\}", "{id}", prefix)):
+            return owner
+    return default_owner
 
 
 def node_triage(state: QEState) -> dict:
@@ -116,7 +151,7 @@ def node_triage(state: QEState) -> dict:
 
     owners_path = Path(__file__).resolve().parents[3] / "sut" / "owners.yaml"
     owners_text = load_owners(owners_path)
-    yaml.safe_load(owners_text)  # fail fast on a broken ownership map
+    owner_rules, default_owner = parse_owners(owners_text)
 
     cluster_text = "\n\n".join(
         f"### {f'DEF-{i + 1:03d}'} (cluster)\n"
@@ -142,7 +177,16 @@ def node_triage(state: QEState) -> dict:
     result = llm.invoke([SystemMessage(content=TRIAGER_SYSTEM), HumanMessage(content=prompt)])
 
     defects = _enforce_flaky_rule(result.defects, clusters, execution)
+    defects = _enforce_known_owner(defects, owner_rules, default_owner)
     return {"clusters": clusters, "defects": defects}
+
+
+def _cluster_for(defect: Defect, clusters: list[FailureCluster]) -> FailureCluster | None:
+    """Find a defect's cluster by the tests it cites, not by position — the
+    model may reorder, merge, or drop entries in its answer."""
+    cited = set(defect.test_ids)
+    matches = [c for c in clusters if cited & set(c.test_ids)]
+    return matches[0] if len(matches) == 1 else None
 
 
 def _enforce_flaky_rule(
@@ -150,9 +194,26 @@ def _enforce_flaky_rule(
 ) -> list[Defect]:
     """Deterministic override: pass-on-retry clusters are flaky, full stop."""
     adjusted = []
-    for i, defect in enumerate(defects):
-        cluster = clusters[i] if i < len(clusters) else None
+    for defect in defects:
+        cluster = _cluster_for(defect, clusters)
         if cluster and _cluster_recovered(cluster, execution) and defect.classification != "flaky":
             defect = defect.model_copy(update={"classification": "flaky"})
         adjusted.append(defect)
     return adjusted
+
+
+def _enforce_known_owner(
+    defects: list[Defect], rules: list[tuple[str, str]], default_owner: str
+) -> list[Defect]:
+    """A hallucinated owner makes a defect unroutable; resolve it from the map."""
+    known = {owner for _, owner in rules} | {default_owner}
+    return [
+        (
+            d
+            if d.suspected_owner in known
+            else d.model_copy(
+                update={"suspected_owner": resolve_owner(d.endpoint, rules, default_owner)}
+            )
+        )
+        for d in defects
+    ]

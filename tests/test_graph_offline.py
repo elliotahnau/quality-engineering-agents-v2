@@ -4,6 +4,8 @@ check gate, the review stage gate (approve/exclude, revise loop, edited
 re-validation, abort) and report rendering without an API key or a live SUT.
 """
 
+from pathlib import Path
+
 import pytest
 from langgraph.types import Command
 
@@ -153,12 +155,15 @@ class FakeRunner:
         pass
 
     def run(self, test_dir, node_ids=None):
-        return {
+        outcomes = {
             "test_ts_001_budget.py::test_ts_001_rejects_negative_daily_budget": CaseOutcome(
                 outcome="failed", message="assert 201 == 422"
             ),
             "test_ts_002_pause.py::test_ts_002_pause_is_idempotent": CaseOutcome(outcome="passed"),
         }
+        if node_ids is None:
+            return outcomes
+        return {nid: outcomes[nid] for nid in node_ids if nid in outcomes}
 
 
 @pytest.fixture()
@@ -200,10 +205,10 @@ def test_full_graph_auto_mode(offline_graph):
     ]
     assert len(result["defects"]) == 1
 
-    report_text = open(result["report_path"]).read()
+    report_text = Path(result["report_path"]).read_text()
     assert "DEF-001" in report_text
     assert "Grounding (live OpenAPI spec only)" in report_text
-    assert open(result["defects_json_path"]).read().count("DEF-001") == 1
+    assert Path(result["defects_json_path"]).read_text().count("DEF-001") == 1
 
 
 def test_review_gate_revise_edit_approve_flow(offline_graph):
