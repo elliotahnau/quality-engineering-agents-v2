@@ -69,12 +69,12 @@ flaky:
     kind: flaky
     category: availability
     endpoint: POST /campaigns/{id}/resume
-    summary: every 5th resume call returns 503 (campaign scheduler busy), controlled by SUT_FLAKY_EVERY
+    summary: every Nth resume call (N = SUT_FLAKY_EVERY, default 5) returns 503 (campaign scheduler busy)
     detection_hint: "intermittent 503 on resume; passes on retry"
 
   - id: FLAKY-002
     kind: flaky
     category: stale-data
     endpoint: GET /campaigns
-    summary: every 7th list call returns an empty list with HTTP 200 (stale replica read), controlled by SUT_FLAKY_EVERY
+    summary: every (N+2)th list call (N = SUT_FLAKY_EVERY, default 5 -> every 7th) returns an empty list with HTTP 200 (stale replica read)
     detection_hint: "campaign list intermittently comes back empty despite existing campaigns; passes on retry"
