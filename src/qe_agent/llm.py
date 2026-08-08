@@ -26,7 +26,9 @@ def get_llm(role: Role = "default") -> BaseChatModel:
         api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         if not api_key:
             raise RuntimeError("GEMINI_API_KEY is not set (see .env.example)")
-        return ChatGoogleGenerativeAI(model=model, temperature=0, google_api_key=api_key)
+        # no temperature: current gemini models use fixed sampling defaults and
+        # ignore it; run-to-run variance is handled by repeated eval runs instead
+        return ChatGoogleGenerativeAI(model=model, google_api_key=api_key)
     if provider == "openai":
         from langchain_openai import ChatOpenAI
 

@@ -1,8 +1,11 @@
 import subprocess
+import time
 import uuid
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
+
+import httpx
 
 from qe_agent import config
 
@@ -58,10 +61,15 @@ def ensure_infra() -> None:
             raise RuntimeError(f"network create failed: {created.stderr}")
 
 
-def start_sut_container(host_port: int, flaky_every: str | None = None) -> None:
+def start_sut_container(
+    host_port: int, flaky_every: str | None = None, ready_timeout: float = 20.0
+) -> None:
     """Run the SUT dual-homed: published port for the host (grounding),
     internal network for the runner. The SUT is trusted code; only the
-    runner is confined to the internal-only network."""
+    runner is confined to the internal-only network.
+
+    Blocks until the SUT answers GET /health (docker run -d alone only
+    proves the container started, not that uvicorn is accepting)."""
     stop_sut_container()
     args = [
         "run",
@@ -87,13 +95,30 @@ def start_sut_container(host_port: int, flaky_every: str | None = None) -> None:
         stop_sut_container()
         raise RuntimeError(f"could not attach SUT to sandbox network: {connected.stderr}")
 
+    health_url = f"http://127.0.0.1:{host_port}/health"
+    deadline = time.monotonic() + ready_timeout
+    while time.monotonic() < deadline:
+        try:
+            if httpx.get(health_url, timeout=1.0).status_code == 200:
+                return
+        except httpx.HTTPError:
+            time.sleep(0.4)
+    stop_sut_container()
+    raise RuntimeError(f"SUT container did not become healthy at {health_url}")
+
 
 def stop_sut_container() -> None:
     _docker("rm", "-f", SUT_CONTAINER)
 
 
-def runner_cmd(test_dir: Path, targets: list[str], name: str) -> list[str]:
-    """The full isolation contract for one pytest run, as a docker CLI call."""
+def runner_cmd(test_dir: Path, out_dir: Path, targets: list[str], name: str) -> list[str]:
+    """The full isolation contract for one pytest run, as a docker CLI call.
+
+    Generated code gets NO writable host-backed path except out_dir, a
+    per-run directory that only receives the JUnit report; the test sources
+    themselves are mounted read-only so a test cannot tamper with its own
+    inputs. (Residual risk — filling the disk through out_dir — is accepted
+    for this exercise and noted in the design doc.)"""
     return [
         "docker",
         "run",
@@ -116,7 +141,9 @@ def runner_cmd(test_dir: Path, targets: list[str], name: str) -> list[str]:
         "--cpus",
         "1",
         "-v",
-        f"{test_dir}:/work/tests",
+        f"{test_dir}:/work/tests:ro",
+        "-v",
+        f"{out_dir}:/work/out",
         "-w",
         "/work/tests",
         "-e",
@@ -131,7 +158,7 @@ def runner_cmd(test_dir: Path, targets: list[str], name: str) -> list[str]:
         "-p",
         "no:cacheprovider",
         "--junitxml",
-        "junit.xml",
+        "/work/out/junit.xml",
         "-o",
         "addopts=",  # neutralize the project's addopts (-m 'not integration')
     ]
@@ -147,10 +174,12 @@ class DockerRunner:
 
     def run(self, test_dir: Path, node_ids: list[str] | None = None) -> dict[str, CaseOutcome]:
         """Run all tests (or only node_ids) and return outcome per pytest nodeid."""
-        junit_path = test_dir / "junit.xml"
+        out_dir = test_dir.parent / "out"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        junit_path = out_dir / "junit.xml"
         junit_path.unlink(missing_ok=True)
         container = f"qe-runner-{uuid.uuid4().hex[:8]}"
-        cmd = runner_cmd(test_dir, node_ids if node_ids else ["."], container)
+        cmd = runner_cmd(test_dir, out_dir, node_ids if node_ids else ["."], container)
         try:
             subprocess.run(cmd, capture_output=True, timeout=self.timeout)
         except subprocess.TimeoutExpired:
@@ -171,8 +200,15 @@ def parse_junit(path: Path) -> dict[str, CaseOutcome]:
     for case in root.iter("testcase"):
         classname = case.get("classname", "")
         name = case.get("name", "")
-        module = classname.split(".")[-1] if classname else ""
-        node_id = f"{module}.py::{name}" if module else name
+        # pytest emits classname as "module" or "module.TestClass" (generated
+        # tests live flat in one directory, so there are no package segments).
+        parts = classname.split(".") if classname else []
+        if len(parts) >= 2 and parts[-1][:1].isupper():
+            node_id = f"{parts[-2]}.py::{parts[-1]}::{name}"
+        elif parts:
+            node_id = f"{parts[-1]}.py::{name}"
+        else:
+            node_id = name
 
         failure = case.find("failure")
         error = case.find("error")
@@ -203,5 +239,7 @@ def write_test_dir(run_dir: Path, files: dict[str, str]) -> Path:
     (test_dir / "conftest.py").write_text(CONFTEST)
     for file_name, code in files.items():
         safe_name = Path(file_name).name  # no path traversal from LLM output
+        if safe_name == "conftest.py":
+            continue  # reserved for the trusted fixture module above
         (test_dir / safe_name).write_text(code)
     return test_dir

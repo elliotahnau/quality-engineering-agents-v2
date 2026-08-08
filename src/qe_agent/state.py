@@ -1,6 +1,6 @@
 """The LangGraph state shared across all stages."""
 
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 from qe_agent.schemas import (
     Defect,
@@ -29,8 +29,8 @@ class QEState(TypedDict, total=False):
     rejected_tests: list[dict]
     revision_feedback: dict[str, str]  # scenario_id -> reviewer feedback
     revision_round: int
-    # review gate outcome: approve | revise | edited | abort
-    review_action: str
+    # review gate outcome
+    review_action: Literal["approve", "revise", "edited", "abort"]
     # execution
     execution: ExecutionReport
     # triage

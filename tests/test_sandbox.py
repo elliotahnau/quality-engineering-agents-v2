@@ -4,7 +4,7 @@ from qe_agent.sandbox import NETWORK, SUT_ALIAS_URL, parse_junit, runner_cmd, wr
 
 JUNIT_XML = """<?xml version="1.0" encoding="utf-8"?>
 <testsuites>
-  <testsuite name="pytest" tests="3">
+  <testsuite name="pytest" tests="5">
     <testcase classname="test_ts_001_budget" name="test_ts_001_neg" time="0.1">
       <failure message="assert 201 == 422">traceback here</failure>
     </testcase>
@@ -12,6 +12,8 @@ JUNIT_XML = """<?xml version="1.0" encoding="utf-8"?>
     <testcase classname="test_ts_003_err" name="test_ts_003_boom" time="0.1">
       <error message="ZeroDivisionError">division by zero</error>
     </testcase>
+    <testcase classname="test_ts_004_cls.TestLifecycle" name="test_ts_004_pause" time="0.1"/>
+    <testcase classname="test_ts_005_param" name="test_ts_005_channels[video]" time="0.1"/>
   </testsuite>
 </testsuites>
 """
@@ -25,6 +27,9 @@ def test_parse_junit(tmp_path: Path):
     assert outcomes["test_ts_002_ok.py::test_ts_002_happy"].outcome == "passed"
     assert outcomes["test_ts_003_err.py::test_ts_003_boom"].outcome == "error"
     assert "assert 201 == 422" in outcomes["test_ts_001_budget.py::test_ts_001_neg"].message
+    # class-based and parametrized node ids survive the round trip
+    assert outcomes["test_ts_004_cls.py::TestLifecycle::test_ts_004_pause"].outcome == "passed"
+    assert outcomes["test_ts_005_param.py::test_ts_005_channels[video]"].outcome == "passed"
 
 
 def test_write_test_dir_blocks_path_traversal(tmp_path: Path):
@@ -35,10 +40,18 @@ def test_write_test_dir_blocks_path_traversal(tmp_path: Path):
     assert (test_dir / "test_ok.py").read_text() == "y = 2"
 
 
+def test_write_test_dir_protects_trusted_conftest(tmp_path: Path):
+    from qe_agent.sandbox import CONFTEST
+
+    test_dir = write_test_dir(tmp_path, {"conftest.py": "MALICIOUS = True"})
+    assert (test_dir / "conftest.py").read_text() == CONFTEST
+
+
 def test_runner_cmd_isolation_contract(tmp_path: Path):
     """The docker invocation IS the sandbox: every isolation flag must be
     present, and nothing may open a path out of the internal network."""
-    cmd = runner_cmd(tmp_path, ["."], "qe-runner-x")
+    tests_dir, out_dir = tmp_path / "tests", tmp_path / "out"
+    cmd = runner_cmd(tests_dir, out_dir, ["."], "qe-runner-x")
 
     def flag(name: str) -> str:
         return cmd[cmd.index(name) + 1]
@@ -50,7 +63,9 @@ def test_runner_cmd_isolation_contract(tmp_path: Path):
     assert flag("--pids-limit") == "128"
     assert flag("--memory") == "512m"
     assert flag("-e") == f"SUT_BASE_URL={SUT_ALIAS_URL}"
-    assert flag("-v") == f"{tmp_path}:/work/tests"
+    # test sources are read-only; the only writable host path is the out dir
+    assert f"{tests_dir}:/work/tests:ro" in cmd
+    assert f"{out_dir}:/work/out" in cmd
     # docker-side args only (pytest's own -p flag comes after the image name):
     # no port publishing, no host network, no privileged mode
     docker_args = cmd[: cmd.index("qe-sandbox:latest")]
