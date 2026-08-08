@@ -1,0 +1,80 @@
+# Ground truth for planted bugs in sut/app.py.
+# This file is EVAL-ONLY: the QE agents must never read it.
+#
+# detection_hint describes the observable symptom a black-box test would see,
+# used by the eval harness to match agent-reported defects to planted bugs.
+
+bugs:
+  - id: BUG-001
+    kind: real
+    category: boundary-validation
+    endpoint: POST /campaigns
+    summary: daily_budget is not validated; zero or negative values are accepted (spec requires > 0)
+    detection_hint: "POST /campaigns with daily_budget <= 0 returns 201 instead of 422"
+    severity: high
+
+  - id: BUG-002
+    kind: real
+    category: cross-field-validation
+    endpoint: POST /campaigns
+    summary: end_date earlier than start_date is accepted (spec requires end_date >= start_date)
+    detection_hint: "POST /campaigns with end_date < start_date returns 201 instead of 422"
+    severity: high
+
+  - id: BUG-003
+    kind: real
+    category: calculation
+    endpoint: GET /campaigns/{id}/metrics
+    summary: CPC formula inverted — returns clicks/spend instead of spend/clicks
+    detection_hint: "metrics.cpc != spend / clicks for an active campaign"
+    severity: medium
+
+  - id: BUG-004
+    kind: real
+    category: error-handling
+    endpoint: GET /campaigns/{id}/metrics
+    summary: ZeroDivisionError -> 500 when impressions == 0 (paused campaign); spec says ctr must be 0
+    detection_hint: "GET metrics for a paused campaign returns 500 instead of 200 with ctr=0"
+    severity: high
+
+  - id: BUG-005
+    kind: real
+    category: state-machine
+    endpoint: POST /campaigns/{id}/pause
+    summary: pause toggles status instead of setting it — pausing a paused campaign reactivates it
+    detection_hint: "two consecutive pause calls leave the campaign with status=active"
+    severity: critical
+
+  - id: BUG-006
+    kind: real
+    category: off-by-one
+    endpoint: POST /reports
+    summary: report date range excludes end_date although spec says the range is inclusive
+    detection_hint: "report for N-day inclusive range returns N-1 rows / end date row missing"
+    severity: medium
+
+  - id: BUG-007
+    kind: real
+    category: error-handling
+    endpoint: GET /campaigns/{id}
+    summary: unknown campaign id raises KeyError -> 500 instead of 404
+    detection_hint: "GET /campaigns/<unknown> returns 500 instead of 404"
+    severity: medium
+
+# Flaky faults live on bug-free endpoints only, so their symptoms never
+# confound a planted bug. Two distinct flakiness classes:
+#   availability (5xx) vs data (stale read with a healthy status code).
+flaky:
+  - id: FLAKY-001
+    kind: flaky
+    category: availability
+    endpoint: POST /campaigns/{id}/resume
+    summary: every 5th resume call returns 503 (campaign scheduler busy), controlled by SUT_FLAKY_EVERY
+    detection_hint: "intermittent 503 on resume; passes on retry"
+
+  - id: FLAKY-002
+    kind: flaky
+    category: stale-data
+    endpoint: GET /campaigns
+    summary: every 7th list call returns an empty list with HTTP 200 (stale replica read), controlled by SUT_FLAKY_EVERY
+    detection_hint: "campaign list intermittently comes back empty despite existing campaigns; passes on retry"
