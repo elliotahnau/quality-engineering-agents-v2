@@ -43,7 +43,7 @@ planted bugs and 2 reproducible flaky faults, all labeled in `sut/bugs.yaml`.
 That manifest is eval-only ground truth — the agents read nothing but the spec.
 
 **Design rationale, trade-offs and evaluation results:**
-[`docs/design.md`](docs/design.md) · [`eval/RESULTS.md`](eval/RESULTS.md)
+[`docs/DESIGN.md`](docs/DESIGN.md)
 
 ## Setup
 
@@ -100,5 +100,5 @@ aborted at the review gate.
 | `src/qe_agent/sandbox.py` | Docker sandbox: internal network, isolation flags, JUnit parsing |
 | `docker/Dockerfile.sandbox` | shared image for the SUT and runner containers |
 | `sut/` | system under test + `bugs.yaml` ground truth |
-| `eval/` | eval harness and results |
-| `docs/design.md` | architecture, trade-offs, evaluation, what's next |
+| `eval/` | eval harness: scoring against `bugs.yaml`, injection probes |
+| `docs/DESIGN.md` | architecture, trade-offs, evaluation, what's next |
