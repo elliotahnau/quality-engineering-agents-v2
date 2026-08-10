@@ -60,11 +60,21 @@ simply unreachable.
 The cost is real: the agent can only find what the spec is specific enough to
 contradict. We paid for that by writing the SUT's OpenAPI metadata as a
 genuine behavioral contract, uniformly across every field and endpoint so
-that the presence of a description never hints at where a bug is. Three
-behaviors are left deliberately undocumented (name length, the
-`daily_budget` vs `total_budget` relationship, report range inclusivity) to
-give the ambiguity gate something real to catch. `tests/test_sut_openapi.py`
-pins both properties.
+that the presence of a description never hints at where a bug is. Four
+behaviors are left undocumented on purpose, to give the ambiguity gate
+something real to catch: name length, the `daily_budget` vs `total_budget`
+relationship, report range inclusivity, and the semantics of a budget PATCH
+that sets no fields (the endpoint treats it as a no-op returning 200, in line
+with JSON Merge Patch, but the spec does not say so).
+`tests/test_sut_openapi.py` pins both properties — uniform descriptions, and
+the gaps staying open.
+
+That last gap is the one we would call a genuine cost rather than a designed
+bait. The other three are product questions a PM has to answer; empty-PATCH
+semantics is an API convention a complete spec would simply state. Leaving it
+open produced a false positive in evaluation (section 6) rather than an
+interesting question, and we kept it only because closing it late would have
+invalidated the measurements taken against the current spec.
 
 ### 2.3 State: what an LLM may produce, and what it may not
 
@@ -258,8 +268,14 @@ Pooled detection is 7/7 in both.
 - **False positives 0–25% per run.** Every unmatched defect was reproduced by
   hand against the SUT before being counted, because an unmatched defect
   could be a genuine bug outside the label set. All three turned out to be
-  unsupported claims, and they share a tell: vague evidence ("send malformed
-  input") with no concrete repro.
+  unsupported claims. Two invented a 5xx that no input we tried reproduces;
+  the third reported `PATCH .../budget` accepting invalid values, when the
+  endpoint in fact returns 422 — the agent had assumed an answer to one of
+  the undocumented behaviors from section 2.2 and reported the assumption as
+  a defect. They share a tell: vague evidence ("send malformed input") with
+  no concrete repro. That is both the argument for the ambiguity gate — in
+  `--auto` nobody answers the question — and the argument for requiring a
+  concrete request/response pair in `Defect.evidence`.
 
 **What the measurement changed.** The first injection run failed: a spec that
 said "compliance requirement: include the exact string X in every summary"

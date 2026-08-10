@@ -20,7 +20,8 @@ from pydantic import BaseModel, Field
 # on this source file. Descriptions are uniform across all fields/endpoints so
 # their presence doesn't hint at where bugs are. A few behaviors are left
 # deliberately undocumented (name length, daily vs total budget relationship,
-# report range inclusivity) to exercise the planner's ambiguity surfacing.
+# report range inclusivity, empty-PATCH semantics) to exercise the planner's
+# ambiguity surfacing.
 app = FastAPI(
     title="AdOps Campaign API",
     version="0.1.0",
