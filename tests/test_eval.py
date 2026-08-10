@@ -37,6 +37,29 @@ def test_normalize_endpoint_unifies_path_params():
     )
 
 
+def test_endpoint_without_a_method_still_matches():
+    """Models sometimes report the bare path. Losing a whole run's matches to
+    that formatting choice would corrupt the metric instead of measuring the
+    pipeline, so the method is compared only when the defect states one."""
+    bare = make_defect(
+        endpoint="/campaigns/{campaign_id}/metrics",
+        title="metrics 500 for paused campaign",
+        evidence="expected 200 with ctr 0, observed 500",
+    )
+    assert "BUG-004" in [lb.id for lb in match_defect(bare)]
+
+
+def test_stated_method_still_disambiguates_same_path():
+    """GET /campaigns (flaky) and POST /campaigns (planted bugs) share a path."""
+    listing = make_defect(
+        endpoint="GET /campaigns",
+        title="campaign list intermittently empty",
+        evidence="list returned empty despite existing campaigns; passed on retry",
+        classification="flaky",
+    )
+    assert [lb.id for lb in match_defect(listing)] == ["FLAKY-002"]
+
+
 def test_labels_stay_in_sync_with_bugs_yaml():
     manifest = yaml.safe_load(Path("sut/bugs.yaml").read_text())
     truth = {
