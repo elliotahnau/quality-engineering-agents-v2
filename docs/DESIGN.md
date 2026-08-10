@@ -257,6 +257,29 @@ the batches are reported apart.
 Batch means: detection 86% / 75%, classification 95% / 90%, FP 0% / 9%.
 Pooled detection is 7/7 in both.
 
+**One interactive run, for comparison.** Every row above is `--auto`: nobody
+answers the ambiguity gate. Driving the same pipeline through the human path
+once — answering the planner's questions, then sending one scenario back
+through the review gate with feedback — produced **7/7 detection, 100%
+classification, 0% false positives**, the best run recorded. The answer that
+mattered was report-range inclusivity: told that an N-day range returns N
+rows, the agent found BUG-006 twice (the missing end-date row, and a same-day
+report returning nothing). This is n=1 and not a claim, but it is the first
+data point for the experiment section 7 proposes.
+
+**A measurement bug we hit, and what it says about the harness.** That
+interactive run first scored 0% detection and 100% false positives. The cause
+was not the pipeline: the model had reported `endpoint` as a bare path
+(`/campaigns/{id}/metrics`) instead of `GET /campaigns/{id}/metrics`, and the
+matcher compared method and path as one string, so every defect missed its
+label. The method is now optional in matching, compared only when the defect
+states one, with the symptom keywords keeping same-path labels apart. We
+re-scored all seven runs above with the fixed matcher; all seven had stated
+methods and their numbers are unchanged. The lesson is worth stating plainly:
+a scoring harness reading free-text model output can fail silently and
+produce a confidently wrong number, so a result that looks dramatic deserves
+to be traced back to raw output before it is believed.
+
 - **Pooled detection 7/7.** Every planted bug is found in at least one run;
   nothing is systematically invisible.
 - **Per-run detection 57–100%** (batch means 75% and 86%). The recurring
@@ -319,11 +342,13 @@ more signal — re-running a failing test in isolation, correlating failures
 across unrelated scenarios hitting the same endpoint, or reading the SUT's
 own error rate.
 
-**Measure what the human gate is worth.** The ambiguity gate's value is
-currently argued, not measured. `--auto` proceeds on assumptions, and the one
-bug that most often escapes (report inclusivity) is precisely the one whose
-answer lives behind that gate. Running the same eval with a human answering
-the questions would put a number on it.
+**Measure what the human gate is worth.** One interactive run reached 7/7
+where `--auto` averages 5–6, and the bug it recovered was exactly the one
+whose answer lives behind the gate (report inclusivity). That is suggestive,
+not evidence: it is a single run against a 57–100% spread. The experiment
+worth running is the same eval at n=10 in both modes, with the ambiguity
+answers fixed in advance so the only variable is whether the gate is
+answered.
 
 **Make evidence falsifiable.** Every false positive we saw had vague
 evidence. Requiring a concrete request/response pair in `Defect.evidence`,
