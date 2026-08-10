@@ -12,7 +12,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from qe_agent import security
 from qe_agent.llm import get_llm
-from qe_agent.schemas import GeneratedTestBatch, TestScenario
+from qe_agent.schemas import GeneratedTest, GeneratedTestBatch, TestPlan, TestScenario
 from qe_agent.state import QEState
 
 BATCH_SIZE = 4
@@ -97,16 +97,30 @@ def node_generate(state: QEState) -> dict:
         # a scenario the model failed to return must not silently keep the
         # version the reviewer just rejected.
         target_ids = {s.id for s in targets}
+        # a model that also returns scenarios nobody asked about would otherwise
+        # duplicate the copies we are keeping
+        regenerated = [t for t in regenerated if t.scenario_id in target_ids]
         kept = [t for t in (state.get("generated_tests") or []) if t.scenario_id not in target_ids]
         tests = kept + regenerated
     else:
         tests = regenerated
 
     return {
-        "generated_tests": tests,
+        "generated_tests": _in_plan_order(tests, plan),
         "revision_feedback": {},  # consumed
         "revision_round": revision_round,
     }
+
+
+def _in_plan_order(tests: list[GeneratedTest], plan: TestPlan) -> list[GeneratedTest]:
+    """Keep the list numbered the way the reviewer first saw it.
+
+    Scenarios are planned highest-risk first, so that order is the reviewer's
+    frame of reference. A regenerated module must come back in the slot it
+    left, not at the bottom of the list.
+    """
+    position = {scenario.id: i for i, scenario in enumerate(plan.scenarios)}
+    return sorted(tests, key=lambda t: position.get(t.scenario_id, len(position)))
 
 
 def node_static_check(state: QEState) -> dict:
