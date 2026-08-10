@@ -64,12 +64,28 @@ LABELS: list[Label] = [
 ]
 
 
+HTTP_METHODS = {"get", "post", "put", "patch", "delete", "head", "options"}
+
+
+def split_endpoint(endpoint: str) -> tuple[str | None, str]:
+    """'GET /campaigns/{campaign_id}/metrics' -> ('get', '/campaigns/{id}/metrics').
+
+    The method is optional: models sometimes report the bare path, and losing
+    a whole run's matches to that formatting choice would corrupt the metric
+    rather than measure the pipeline.
+    """
+    text = re.sub(r"\s+", " ", endpoint.strip().lower()).rstrip("/")
+    method = None
+    head, _, rest = text.partition(" ")
+    if head in HTTP_METHODS and rest:
+        method, text = head, rest
+    path = re.sub(r"\{[^}]*\}", "{id}", text)
+    return method, re.sub(r"/<[^>]*>", "/{id}", path)
+
+
 def normalize_endpoint(endpoint: str) -> str:
-    """'GET /campaigns/{campaign_id}/metrics' -> 'get /campaigns/{id}/metrics'."""
-    text = endpoint.strip().lower().rstrip("/")
-    text = re.sub(r"\{[^}]*\}", "{id}", text)
-    text = re.sub(r"/<[^>]*>", "/{id}", text)
-    return re.sub(r"\s+", " ", text)
+    """Path form used for comparison, method dropped."""
+    return split_endpoint(endpoint)[1]
 
 
 def defect_text(defect: Defect) -> str:
@@ -79,12 +95,20 @@ def defect_text(defect: Defect) -> str:
 
 
 def match_defect(defect: Defect) -> list[Label]:
-    """All labels this defect provides evidence for (possibly none)."""
-    endpoint = normalize_endpoint(defect.endpoint)
+    """All labels this defect provides evidence for (possibly none).
+
+    Paths must agree; the method is only compared when the defect states one,
+    and the symptom keywords keep same-path labels apart.
+    """
+    method, path = split_endpoint(defect.endpoint)
     text = defect_text(defect)
-    return [
-        label
-        for label in LABELS
-        if normalize_endpoint(label.endpoint) == endpoint
-        and any(keyword in text for keyword in label.keywords)
-    ]
+    matches = []
+    for label in LABELS:
+        label_method, label_path = split_endpoint(label.endpoint)
+        if label_path != path:
+            continue
+        if method is not None and label_method is not None and method != label_method:
+            continue
+        if any(keyword in text for keyword in label.keywords):
+            matches.append(label)
+    return matches
