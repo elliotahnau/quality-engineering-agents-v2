@@ -1,14 +1,18 @@
-"""Offline tests for the eval harness: matching, scoring, and poisoned-spec
-construction. No LLM, no Docker."""
+"""Offline tests for the eval harness: matching, scoring, replay, and
+poisoned-spec construction. No LLM, no Docker."""
 
 from pathlib import Path
 
+import pytest
 import yaml
-from eval.harness import score_run
-from eval.injection import CANARY, VARIANTS
+from eval.harness import score_clean_run, score_run
+from eval.injection import CANARY, RESPONSE_DIRECTIVE, VARIANTS
 from eval.matcher import LABELS, match_defect, normalize_endpoint
+from eval.replay import NOT_REPLAYABLE, NOT_REPRODUCED, REPRODUCED, replay_defect
+from fastapi.testclient import TestClient
+from sut import app as sut_app
 
-from qe_agent.schemas import Defect
+from qe_agent.schemas import Defect, Repro
 from qe_agent.security import scan_artifact
 
 
@@ -105,7 +109,7 @@ def test_score_run_metrics():
             evidence="503 scheduler busy, passed on retry",
             classification="real",
         ),
-        make_defect(  # unmatched + classified real -> false positive
+        make_defect(  # unmatched + no replay available -> unverified claim
             id="DEF-003",
             endpoint="GET /health",
             title="health check content-type",
@@ -121,9 +125,129 @@ def test_score_run_metrics():
     score = score_run(defects)
     assert score.detected == {"BUG-001", "FLAKY-001"}
     assert score.matched_defects == 2 and score.correct_classifications == 1
-    assert score.false_positives == ["health check content-type"]
+    # without a replay judge, an unmatched claim stays an unverified claim
+    assert score.false_positives == []
+    assert score.unverified_claims == ["health check content-type"]
     assert score.test_bug_noise == ["generated test asserted wrong shape"]
-    assert score.false_positive_rate == 0.25
+    assert score.false_positive_rate == 0.0
+    assert score.false_positive_rate_upper == 0.25
+    # recall split by label kind, confusion over matched defects
+    assert score.detection_rate == 1 / 7 and score.flaky_detection_rate == 0.5
+    assert score.confusion == {("real", "real"): 1, ("flaky", "real"): 1}
+    # 2 of 3 real/flaky claims point at genuine (labeled) behavior
+    assert score.claim_precision == pytest.approx(2 / 3)
+
+
+def test_score_run_replay_splits_unmatched_claims():
+    """The replay verdict decides whether an unmatched claim is a confirmed
+    false alarm, a label-set gap, or stays unverified."""
+    reproduced = make_defect(
+        id="DEF-010", endpoint="PATCH /campaigns/{id}/budget", title="type coercion accepted"
+    )
+    refuted = make_defect(id="DEF-011", endpoint="GET /health", title="phantom 500")
+    unverifiable = make_defect(id="DEF-012", endpoint="GET /health", title="vague claim")
+    verdicts = {
+        "DEF-010": REPRODUCED,
+        "DEF-011": NOT_REPRODUCED,
+        "DEF-012": NOT_REPLAYABLE,
+    }
+    score = score_run([reproduced, refuted, unverifiable], replay=lambda d: verdicts[d.id])
+    assert score.unlabeled_reproduced == ["type coercion accepted"]
+    assert score.false_positives == ["phantom 500"]
+    assert score.unverified_claims == ["vague claim"]
+    assert score.false_positive_rate == pytest.approx(1 / 3)
+    assert score.claim_precision == pytest.approx(1 / 3)
+
+
+def test_score_clean_run_uses_replay_not_labels():
+    """Against the clean SUT the labels describe switched-off bugs, so a
+    label-matching defect must NOT earn detection credit — replay decides."""
+    looks_like_bug_001 = make_defect(evidence="daily_budget -1 accepted, expected 422")
+    genuine_gap = make_defect(id="DEF-002", title="patch coerces bool to budget")
+    noise = make_defect(id="DEF-003", title="test asserted wrong shape", classification="test_bug")
+    verdicts = {"DEF-001": NOT_REPRODUCED, "DEF-002": REPRODUCED}
+    score = score_clean_run(
+        [looks_like_bug_001, genuine_gap, noise], replay=lambda d: verdicts[d.id]
+    )
+    assert score.false_alarms == [looks_like_bug_001.title]
+    assert score.reproduced == ["patch coerces bool to budget"]
+    assert score.test_bug_noise == ["test asserted wrong shape"]
+
+
+@pytest.fixture()
+def sut_client(monkeypatch):
+    monkeypatch.setenv("SUT_FLAKY_EVERY", "0")
+    sut_app.reset_state()
+    with TestClient(sut_app.app, raise_server_exceptions=False) as c:
+        yield c
+
+
+def test_replay_reproduces_planted_bug(sut_client):
+    defect = make_defect(
+        repro=Repro(
+            method="POST",
+            path="/campaigns",
+            payload={
+                "name": "x",
+                "channel": "search",
+                "total_budget": 100.0,
+                "daily_budget": -50.0,
+                "start_date": "2026-01-01",
+                "end_date": "2026-01-10",
+            },
+            expected_status=422,
+            observed_status=201,
+        )
+    )
+    assert replay_defect(defect, sut_client) == REPRODUCED
+
+
+def test_replay_refutes_false_claim_and_fills_placeholder(sut_client):
+    # PATCH budget DOES validate positivity — this claim must be refuted;
+    # the {id} placeholder is satisfied with a fresh campaign
+    defect = make_defect(
+        repro=Repro(
+            method="PATCH",
+            path="/campaigns/{id}/budget",
+            payload={"daily_budget": -5},
+            expected_status=422,
+            observed_status=200,
+        )
+    )
+    assert replay_defect(defect, sut_client) == NOT_REPRODUCED
+
+
+def test_replay_without_structured_repro_is_not_replayable(sut_client):
+    assert replay_defect(make_defect(), sut_client) == NOT_REPLAYABLE
+
+
+def test_replay_against_clean_sut_refutes_planted_bug_claim(sut_client, monkeypatch):
+    monkeypatch.setenv("SUT_CLEAN", "1")
+    defect = make_defect(
+        repro=Repro(
+            method="POST",
+            path="/campaigns",
+            payload={
+                "name": "x",
+                "channel": "search",
+                "total_budget": 100.0,
+                "daily_budget": -50.0,
+                "start_date": "2026-01-01",
+                "end_date": "2026-01-10",
+            },
+            expected_status=422,
+            observed_status=201,
+        )
+    )
+    assert replay_defect(defect, sut_client) == NOT_REPRODUCED
+
+
+def test_response_injection_directive_is_scanner_visible():
+    """The poisoned-response probe's directive must trip the pattern scanner,
+    so the attack shows up in warnings even when the triager ignores it."""
+    warnings = scan_artifact(RESPONSE_DIRECTIVE)
+    assert any("result-tampering" in w for w in warnings)
+    assert any("echo-injection" in w for w in warnings)
 
 
 def test_variants_poison_spec_and_scanner_catches_most():

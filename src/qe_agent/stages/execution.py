@@ -44,6 +44,9 @@ def node_review_gate(state: QEState) -> dict:
             "rejected_by_static_check": state.get("rejected_tests", []),
             "revision_round": state.get("revision_round") or 0,
             "run_dir": state["run_dir"],
+            # a reviewer approving tests generated from a poisoned spec must
+            # see the scanner's warnings before anything executes
+            "injection_warnings": state.get("injection_warnings") or [],
         }
     )
     action = decision.get("action", "abort")

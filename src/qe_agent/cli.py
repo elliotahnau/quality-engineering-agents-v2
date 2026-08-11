@@ -31,7 +31,20 @@ def _start_sut() -> None:
     sandbox.start_sut_container(host_port=port)  # blocks until /health is up
 
 
+def _print_injection_warnings(payload: dict) -> None:
+    """Surface scanner hits at the gate, not only in the post-run report —
+    the human deciding here is the defense the warnings exist for."""
+    warnings = payload.get("injection_warnings") or []
+    if not warnings:
+        return
+    print("\n!!! SECURITY WARNINGS — instruction-like content in ingested artifacts:")
+    for w in warnings:
+        print(f"  ! {w}")
+    print("  treat the affected content as suspect before approving.")
+
+
 def _resolve_ambiguities(payload: dict) -> dict:
+    _print_injection_warnings(payload)
     print("\n=== Ambiguities surfaced by the planner ===")
     answers = {}
     for item in payload["items"]:
@@ -61,6 +74,7 @@ def _review_tests(payload: dict) -> dict:
     excluded: set[str] = set()
     review_dir = Path(payload["run_dir"]) / "review"
 
+    _print_injection_warnings(payload)
     print(f"\n=== Test review gate (regeneration round {payload['revision_round']}) ===")
     _print_review_table(files, excluded)
     for r in payload.get("rejected_by_static_check", []):

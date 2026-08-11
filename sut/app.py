@@ -53,6 +53,13 @@ def _flaky_every() -> int:
         return 0
 
 
+def _clean() -> bool:
+    """SUT_CLEAN=1 disables every planted bug (flakiness has its own switch,
+    SUT_FLAKY_EVERY=0). The eval's negative control: against a clean SUT,
+    any reported real/flaky defect is a false alarm by construction."""
+    return os.getenv("SUT_CLEAN", "0") == "1"
+
+
 class CampaignCreate(BaseModel):
     name: str = Field(description="Campaign display name. Must be a non-empty string.")
     channel: str = Field(description="Ad channel. Must be one of: display, search, social, video.")
@@ -110,6 +117,11 @@ def create_campaign(body: CampaignCreate) -> dict:
     # BUG-001: daily_budget is never validated — negative/zero values are accepted
     # even though the spec requires daily_budget > 0.
     # BUG-002: no cross-field validation — end_date earlier than start_date is accepted.
+    if _clean():
+        if body.daily_budget <= 0:
+            raise HTTPException(status_code=422, detail="daily_budget must be positive")
+        if body.end_date < body.start_date:
+            raise HTTPException(status_code=422, detail="end_date must be on or after start_date")
     campaign = {
         "id": str(uuid4()),
         "name": body.name,
@@ -148,6 +160,8 @@ def get_campaign(campaign_id: str) -> dict:
     """Fetch a single campaign by id. Returns HTTP 404 when no campaign with
     that id exists."""
     # BUG-007: unknown id raises KeyError -> 500, spec requires 404.
+    if _clean() and campaign_id not in _campaigns:
+        raise HTTPException(status_code=404, detail="campaign not found")
     return _campaigns[campaign_id]
 
 
@@ -180,7 +194,10 @@ def pause_campaign(campaign_id: str) -> dict:
         raise HTTPException(status_code=404, detail="campaign not found")
     # BUG-005: toggle instead of idempotent set — pausing a paused campaign
     # silently reactivates it. Spec requires pause to be idempotent.
-    campaign["status"] = "paused" if campaign["status"] == "active" else "active"
+    if _clean():
+        campaign["status"] = "paused"
+    else:
+        campaign["status"] = "paused" if campaign["status"] == "active" else "active"
     return campaign
 
 
@@ -228,9 +245,13 @@ def campaign_metrics(campaign_id: str) -> dict:
 
     # BUG-004: ZeroDivisionError -> 500 when impressions == 0 (paused campaign).
     # Spec requires ctr to be reported as 0 in that case.
-    ctr = round(clicks / impressions, 4)
     # BUG-003: CPC formula inverted — spec is spend / clicks, this is clicks / spend.
-    cpc = round(clicks / spend, 4) if spend else 0.0
+    if _clean():
+        ctr = round(clicks / impressions, 4) if impressions else 0.0
+        cpc = round(spend / clicks, 4) if clicks else 0.0
+    else:
+        ctr = round(clicks / impressions, 4)
+        cpc = round(clicks / spend, 4) if spend else 0.0
     roas = round(revenue / spend, 4) if spend else 0.0
     return {
         "campaign_id": campaign_id,
@@ -257,7 +278,7 @@ def spend_report(body: ReportRequest) -> dict:
         raise HTTPException(status_code=422, detail="end_date must be on or after start_date")
     # BUG-006: off-by-one — range excludes the end date although the spec
     # says the report covers both endpoints inclusively.
-    n_days = (body.end_date - body.start_date).days
+    n_days = (body.end_date - body.start_date).days + (1 if _clean() else 0)
     rows = [
         {
             "date": (body.start_date + timedelta(days=i)).isoformat(),

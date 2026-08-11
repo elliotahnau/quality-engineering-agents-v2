@@ -62,7 +62,10 @@ def ensure_infra() -> None:
 
 
 def start_sut_container(
-    host_port: int, flaky_every: str | None = None, ready_timeout: float = 20.0
+    host_port: int,
+    flaky_every: str | None = None,
+    ready_timeout: float = 20.0,
+    clean: bool = False,
 ) -> None:
     """Run the SUT dual-homed: published port for the host (grounding),
     internal network for the runner. The SUT is trusted code; only the
@@ -86,6 +89,10 @@ def start_sut_container(
     ]
     if flaky_every is not None:
         args += ["-e", f"SUT_FLAKY_EVERY={flaky_every}"]
+    if clean:
+        # negative control: no planted bugs, so every reported defect is a
+        # false alarm by construction (see eval --clean)
+        args += ["-e", "SUT_CLEAN=1"]
     args += [IMAGE, "python", "-m", "sut", "--host", "0.0.0.0", "--port", "8000"]
     started = _docker(*args)
     if started.returncode != 0:

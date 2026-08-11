@@ -115,3 +115,47 @@ def test_correct_behaviors_still_correct(client):
     # resume is a plain set
     client.post(f"/campaigns/{cid}/pause")
     assert client.post(f"/campaigns/{cid}/resume").json()["status"] == "active"
+
+
+@pytest.fixture()
+def clean_client(monkeypatch):
+    """The eval's negative control: SUT_CLEAN=1 switches every planted bug off."""
+    monkeypatch.setenv("SUT_FLAKY_EVERY", "0")
+    monkeypatch.setenv("SUT_CLEAN", "1")
+    sut_app.reset_state()
+    with TestClient(sut_app.app, raise_server_exceptions=False) as c:
+        yield c
+
+
+def test_clean_mode_disables_every_planted_bug(clean_client):
+    c = clean_client
+    # BUG-001 / BUG-002: creation validates daily_budget and date order
+    assert make_campaign(c, daily_budget=-50.0).status_code == 422
+    assert make_campaign(c, start_date="2026-08-10", end_date="2026-08-01").status_code == 422
+    cid = make_campaign(c).json()["id"]
+    # BUG-003: cpc is spend / clicks
+    m = c.get(f"/campaigns/{cid}/metrics").json()
+    assert m["cpc"] == round(m["spend"] / m["clicks"], 4)
+    # BUG-006: report range includes the end date
+    report = c.post(
+        "/reports",
+        json={"campaign_id": cid, "start_date": "2026-08-01", "end_date": "2026-08-03"},
+    )
+    assert [r["date"] for r in report.json()["rows"]][-1] == "2026-08-03"
+    assert len(report.json()["rows"]) == 3
+    # BUG-004: paused metrics answer 200 with ctr=0
+    c.post(f"/campaigns/{cid}/pause")
+    resp = c.get(f"/campaigns/{cid}/metrics")
+    assert resp.status_code == 200 and resp.json()["ctr"] == 0
+    # BUG-005: pause is idempotent
+    assert c.post(f"/campaigns/{cid}/pause").json()["status"] == "paused"
+    # BUG-007: unknown id is 404
+    assert c.get("/campaigns/no-such-id").status_code == 404
+
+
+def test_clean_mode_keeps_correct_behaviors(clean_client):
+    assert make_campaign(clean_client, total_budget=-1).status_code == 422
+    cid = make_campaign(clean_client).json()["id"]
+    assert (
+        clean_client.patch(f"/campaigns/{cid}/budget", json={"daily_budget": -5}).status_code == 422
+    )

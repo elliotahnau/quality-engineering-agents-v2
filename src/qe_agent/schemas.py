@@ -164,6 +164,26 @@ class FailureCluster(BaseModel):
     )
 
 
+class Repro(BaseModel):
+    """A machine-replayable single-request reproduction of a defect.
+
+    The eval harness replays it against a live SUT to decide whether an
+    unlabeled defect is a genuine behavior gap or a false alarm."""
+
+    method: str = Field(description="HTTP method, e.g. POST")
+    path: str = Field(
+        description=(
+            "Literal request path, e.g. /campaigns. Use {id} as a placeholder "
+            "for a resource id that must be created first."
+        )
+    )
+    payload: dict | None = Field(
+        default=None, description="The exact JSON body sent, if the request has one"
+    )
+    expected_status: int = Field(description="Status code the spec requires")
+    observed_status: int = Field(description="Status code actually observed")
+
+
 class Defect(BaseModel):
     id: str = Field(description="Stable id like DEF-001")
     title: str
@@ -187,6 +207,13 @@ class Defect(BaseModel):
             'is not evidence; \'{"total_budget": true} returned 200, expected '
             "422' is."
         )
+    )
+    repro: Repro | None = Field(
+        default=None,
+        description=(
+            "Structured single-request repro when the defect is observable from "
+            "one HTTP call; null when reproduction needs multi-step state"
+        ),
     )
     root_cause_hypothesis: str
     suspected_owner: str

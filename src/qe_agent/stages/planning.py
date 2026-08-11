@@ -138,6 +138,8 @@ def node_ambiguity_gate(state: QEState) -> dict:
         {
             "type": "ambiguities",
             "items": [a.model_dump() for a in plan.ambiguities],
+            # the human deciding here must know the spec looked poisoned
+            "injection_warnings": state.get("injection_warnings") or [],
         }
     )
     return {"human_answers": dict(answers or {})}
