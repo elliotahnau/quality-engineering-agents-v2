@@ -33,6 +33,7 @@ from eval.injection import (
 from eval.replay import replay_defect
 from qe_agent import config, sandbox
 from qe_agent.graph import build_graph
+from qe_agent.report import operation_coverage, scenario_funnel
 
 
 def _out_dir() -> Path:
@@ -46,6 +47,7 @@ def cmd_metrics(args: argparse.Namespace) -> None:
     port = urlparse(config.sut_base_url()).port or 8000
     sandbox.ensure_infra()
     scores = []
+    coverage_lines = []
     for i in range(1, args.runs + 1):
         mode = "clean (negative control)" if args.clean else "planted-bug"
         print(f"[eval] run {i}/{args.runs}: starting fresh {mode} SUT container...")
@@ -56,7 +58,7 @@ def cmd_metrics(args: argparse.Namespace) -> None:
             flaky_every="0" if args.clean else None,
         )
         try:
-            defects, _ = run_pipeline_once(build_graph())
+            defects, result = run_pipeline_once(build_graph())
             # replay unmatched claims while this run's SUT is still up
             with httpx.Client(base_url=config.sut_base_url(), timeout=10.0) as client:
 
@@ -70,6 +72,15 @@ def cmd_metrics(args: argparse.Namespace) -> None:
             sandbox.stop_sut_container()
         (out / f"run-{i}-defects.json").write_text(dump_defects(defects))
         scores.append(score)
+        covered, uncovered = operation_coverage(result)
+        funnel = scenario_funnel(result)
+        executed_n = sum(1 for row in funnel if row["status"] == "executed")
+        coverage_lines.append(
+            f"- run {i}: operations {len(covered)}/{len(covered) + len(uncovered)}"
+            + (f" (uncovered: {', '.join(uncovered)})" if uncovered else "")
+            + f" | scenarios executed {executed_n}/{len(funnel)}"
+        )
+        print(f"[eval] {coverage_lines[-1][2:]}")
         if args.clean:
             print(
                 f"[eval] clean run {i}: {len(defects)} defects, "
@@ -89,6 +100,7 @@ def cmd_metrics(args: argparse.Namespace) -> None:
     else:
         report = render_results(scores)
         report_name = "results-metrics.md"
+    report += "\n\n## Coverage per run\n\n" + "\n".join(coverage_lines) + "\n"
     (out / report_name).write_text(report)
     print(f"\n{report}\n\nwritten to {out}/{report_name}")
 

@@ -54,7 +54,16 @@ def node_review_gate(state: QEState) -> dict:
     if action == "approve":
         excluded = set(decision.get("excluded") or [])
         kept = [t for t in state["generated_tests"] if t.file_name not in excluded]
-        return {"review_action": "approve", "generated_tests": kept}
+        # remember WHICH scenarios the reviewer dropped: the coverage report
+        # must distinguish "reviewer excluded" from "silently lost"
+        excluded_scenarios = sorted(
+            {t.scenario_id for t in state["generated_tests"] if t.file_name in excluded}
+        )
+        return {
+            "review_action": "approve",
+            "generated_tests": kept,
+            "excluded_scenarios": excluded_scenarios,
+        }
 
     if action == "revise":
         return {

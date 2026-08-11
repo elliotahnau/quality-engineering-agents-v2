@@ -7,6 +7,7 @@ from qe_agent.schemas import (
     CaseResult,
     Defect,
     ExecutionReport,
+    Repro,
     RiskLevel,
     TestPlan,
     TestScenario,
@@ -17,6 +18,7 @@ from qe_agent.stages import triage
 from qe_agent.stages.triage import (
     _enforce_flaky_rule,
     _enforce_known_owner,
+    _merge_exact_duplicates,
     cluster_failures,
     node_triage,
     parse_owners,
@@ -173,6 +175,55 @@ def test_malformed_ownership_map_is_rejected(bad_map):
 def test_shipped_ownership_map_is_valid():
     rules, default_owner = parse_owners(Path("sut/owners.yaml").read_text())
     assert rules and default_owner
+
+
+def _repro(**overrides) -> Repro:
+    base = dict(
+        method="POST",
+        path="/campaigns",
+        payload={"daily_budget": -1},
+        expected_status=422,
+        observed_status=201,
+    )
+    base.update(overrides)
+    return Repro(**base)
+
+
+def test_exact_duplicate_defects_are_merged():
+    """Two scenarios hitting the same bug file the same request twice —
+    one defect ticket, citing both."""
+    a = _defect("real").model_copy(
+        update={"scenario_ids": ["TS-001"], "test_ids": ["t1.py::x"], "repro": _repro()}
+    )
+    b = _defect("real").model_copy(
+        update={
+            "id": "DEF-002",
+            "scenario_ids": ["TS-009"],
+            "test_ids": ["t9.py::y"],
+            "repro": _repro(),
+        }
+    )
+    merged = _merge_exact_duplicates([a, b])
+    assert len(merged) == 1
+    assert merged[0].scenario_ids == ["TS-001", "TS-009"]
+    assert merged[0].test_ids == ["t1.py::x", "t9.py::y"]
+
+
+def test_different_payloads_are_not_merged():
+    """BUG-001 and BUG-002 share endpoint AND status pair; only the payload
+    tells them apart, so payload equality is part of the merge key."""
+    a = _defect("real").model_copy(update={"repro": _repro()})
+    b = _defect("real").model_copy(
+        update={
+            "id": "DEF-002",
+            "repro": _repro(payload={"start_date": "2026-02-01", "end_date": "2026-01-01"}),
+        }
+    )
+    assert len(_merge_exact_duplicates([a, b])) == 2
+
+
+def test_defects_without_repro_are_never_merged():
+    assert len(_merge_exact_duplicates([_defect("real"), _defect("real")])) == 2
 
 
 class _FakeStructuredLLM:

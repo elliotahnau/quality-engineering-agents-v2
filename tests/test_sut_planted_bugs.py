@@ -78,6 +78,16 @@ def test_bug_007_unknown_campaign_500(client):
     assert resp.status_code == 500  # spec requires 404
 
 
+def test_bug_008_budget_type_coercion(client):
+    cid = make_campaign(client).json()["id"]
+    resp = client.patch(f"/campaigns/{cid}/budget", json={"total_budget": True})
+    assert resp.status_code == 200  # spec requires 422
+    assert resp.json()["total_budget"] == 1.0  # true silently became a budget
+    resp = client.patch(f"/campaigns/{cid}/budget", json={"daily_budget": "50"})
+    assert resp.status_code == 200
+    assert resp.json()["daily_budget"] == 50.0
+
+
 def test_flaky_001_resume_every_5th_call_503(client, monkeypatch):
     monkeypatch.setenv("SUT_FLAKY_EVERY", "5")
     sut_app.reset_state()
@@ -151,6 +161,9 @@ def test_clean_mode_disables_every_planted_bug(clean_client):
     assert c.post(f"/campaigns/{cid}/pause").json()["status"] == "paused"
     # BUG-007: unknown id is 404
     assert c.get("/campaigns/no-such-id").status_code == 404
+    # BUG-008: non-numeric budgets are rejected (both PATCH and POST)
+    assert c.patch(f"/campaigns/{cid}/budget", json={"total_budget": True}).status_code == 422
+    assert make_campaign(c, daily_budget="50").status_code == 422
 
 
 def test_clean_mode_keeps_correct_behaviors(clean_client):

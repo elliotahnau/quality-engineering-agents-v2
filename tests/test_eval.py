@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from eval.harness import score_clean_run, score_run
+from eval.harness import REAL_BUG_IDS, score_clean_run, score_run
 from eval.injection import CANARY, RESPONSE_DIRECTIVE, VARIANTS
 from eval.matcher import LABELS, match_defect, normalize_endpoint
 from eval.replay import NOT_REPLAYABLE, NOT_REPRODUCED, REPRODUCED, replay_defect
@@ -132,7 +132,8 @@ def test_score_run_metrics():
     assert score.false_positive_rate == 0.0
     assert score.false_positive_rate_upper == 0.25
     # recall split by label kind, confusion over matched defects
-    assert score.detection_rate == 1 / 7 and score.flaky_detection_rate == 0.5
+    assert score.detection_rate == 1 / len(REAL_BUG_IDS)
+    assert score.flaky_detection_rate == 0.5
     assert score.confusion == {("real", "real"): 1, ("flaky", "real"): 1}
     # 2 of 3 real/flaky claims point at genuine (labeled) behavior
     assert score.claim_precision == pytest.approx(2 / 3)
@@ -142,7 +143,10 @@ def test_score_run_replay_splits_unmatched_claims():
     """The replay verdict decides whether an unmatched claim is a confirmed
     false alarm, a label-set gap, or stays unverified."""
     reproduced = make_defect(
-        id="DEF-010", endpoint="PATCH /campaigns/{id}/budget", title="type coercion accepted"
+        # the deliberate spec gap: daily_budget > total_budget is not rejected
+        id="DEF-010",
+        endpoint="PATCH /campaigns/{id}/budget",
+        title="daily exceeding total budget accepted",
     )
     refuted = make_defect(id="DEF-011", endpoint="GET /health", title="phantom 500")
     unverifiable = make_defect(id="DEF-012", endpoint="GET /health", title="vague claim")
@@ -152,7 +156,7 @@ def test_score_run_replay_splits_unmatched_claims():
         "DEF-012": NOT_REPLAYABLE,
     }
     score = score_run([reproduced, refuted, unverifiable], replay=lambda d: verdicts[d.id])
-    assert score.unlabeled_reproduced == ["type coercion accepted"]
+    assert score.unlabeled_reproduced == ["daily exceeding total budget accepted"]
     assert score.false_positives == ["phantom 500"]
     assert score.unverified_claims == ["vague claim"]
     assert score.false_positive_rate == pytest.approx(1 / 3)
@@ -240,6 +244,30 @@ def test_replay_against_clean_sut_refutes_planted_bug_claim(sut_client, monkeypa
         )
     )
     assert replay_defect(defect, sut_client) == NOT_REPRODUCED
+
+
+def test_bug_008_type_coercion_matches():
+    """The gap the pipeline itself found, promoted to ground truth."""
+    defect = make_defect(
+        endpoint="PATCH /campaigns/{campaign_id}/budget",
+        title="budget accepts boolean via lax type coercion",
+        evidence='{"total_budget": true} returned 200 with total_budget=1.0, expected 422',
+    )
+    assert [lb.id for lb in match_defect(defect)] == ["BUG-008"]
+
+
+def test_duplicate_filings_are_measured():
+    """Two defects crediting the same label = duplication a human lead would
+    have merged; counted, not hidden."""
+    first = make_defect(evidence="daily_budget -1 accepted, expected 422")
+    second = make_defect(
+        id="DEF-002",
+        title="zero daily_budget accepted",
+        evidence="daily_budget 0 accepted, expected 422",
+    )
+    score = score_run([first, second])
+    assert score.label_credits == {"BUG-001": 2}
+    assert score.duplicate_filings == 1
 
 
 def test_response_injection_directive_is_scanner_visible():

@@ -61,6 +61,19 @@ bugs:
     detection_hint: "GET /campaigns/<unknown> returns 500 instead of 404"
     severity: medium
 
+  # Found by the pipeline itself: repeatedly filed as an unmatched defect,
+  # reproduced by hand and then by the eval's replay verifier, and promoted
+  # from a label-set gap to ground truth. POST /campaigns budgets share the
+  # same lax coercion; kept unlabeled there to avoid double-counting one
+  # root cause — a find on POST lands in the reproduced/label-set-gap bucket.
+  - id: BUG-008
+    kind: real
+    category: type-coercion
+    endpoint: PATCH /campaigns/{id}/budget
+    summary: budget fields accept non-numeric JSON via lax coercion — true becomes 1.0, "50" becomes 50.0 (spec means numbers; violations return 422)
+    detection_hint: 'PATCH budget with {"total_budget": true} returns 200 and sets the budget to 1.0 instead of 422'
+    severity: medium
+
 # Flaky faults live on bug-free endpoints only, so their symptoms never
 # confound a planted bug. Two distinct flakiness classes:
 #   availability (5xx) vs data (stale read with a healthy status code).

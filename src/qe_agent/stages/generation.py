@@ -111,7 +111,7 @@ def node_generate(state: QEState) -> dict:
         tests = regenerated
 
     return {
-        "generated_tests": _in_plan_order(tests, plan),
+        "generated_tests": _dedupe_file_names(_in_plan_order(tests, plan)),
         "revision_feedback": {},  # consumed
         "revision_round": revision_round,
     }
@@ -126,6 +126,26 @@ def _in_plan_order(tests: list[GeneratedTest], plan: TestPlan) -> list[Generated
     """
     position = {scenario.id: i for i, scenario in enumerate(plan.scenarios)}
     return sorted(tests, key=lambda t: position.get(t.scenario_id, len(position)))
+
+
+def _dedupe_file_names(tests: list[GeneratedTest]) -> list[GeneratedTest]:
+    """Two modules with the same file name would silently shadow each other
+    when materialized into the test directory (dict key collision), dropping
+    a scenario's coverage on the floor. Disambiguate deterministically; runs
+    after ordering so renames are stable across revision rounds."""
+    seen: set[str] = set()
+    out = []
+    for test in tests:
+        name = test.file_name
+        if name in seen:
+            stem, n = name.removesuffix(".py"), 2
+            while f"{stem}_{n}.py" in seen:
+                n += 1
+            name = f"{stem}_{n}.py"
+            test = test.model_copy(update={"file_name": name})
+        seen.add(name)
+        out.append(test)
+    return out
 
 
 def node_static_check(state: QEState) -> dict:

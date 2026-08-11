@@ -7,6 +7,7 @@ a cluster eventually passed on retry, the defect is flaky regardless of what
 the LLM said.
 """
 
+import json
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -194,11 +195,49 @@ def node_triage(state: QEState) -> dict:
 
     defects = _enforce_flaky_rule(result.defects, clusters, execution)
     defects = _enforce_known_owner(defects, owner_rules, default_owner)
+    defects = _merge_exact_duplicates(defects)
     return {
         "clusters": clusters,
         "defects": defects,
         "injection_warnings": (state.get("injection_warnings") or []) + evidence_warnings,
     }
+
+
+def _merge_exact_duplicates(defects: list[Defect]) -> list[Defect]:
+    """Merge defects whose structured repros describe the identical request
+    and outcome — the same behavior filed twice because two scenarios hit the
+    same bug. Deliberately conservative: differing payloads are NOT merged
+    (two validation bugs can share an endpoint and status pair, e.g. BUG-001
+    vs BUG-002), and defects without a repro are left alone. Broader,
+    fuzzier duplication is measured by the eval, not silently collapsed."""
+    merged: dict[tuple, int] = {}  # repro signature -> index in out
+    out: list[Defect] = []
+    for defect in defects:
+        repro = defect.repro
+        if repro is None:
+            out.append(defect)
+            continue
+        key = (
+            defect.classification,
+            repro.method.upper(),
+            re.sub(r"\{[^}]*\}", "{id}", repro.path),
+            json.dumps(repro.payload, sort_keys=True),
+            repro.expected_status,
+            repro.observed_status,
+        )
+        if key in merged:
+            i = merged[key]
+            keeper = out[i]
+            out[i] = keeper.model_copy(
+                update={
+                    "scenario_ids": sorted(set(keeper.scenario_ids) | set(defect.scenario_ids)),
+                    "test_ids": sorted(set(keeper.test_ids) | set(defect.test_ids)),
+                }
+            )
+        else:
+            merged[key] = len(out)
+            out.append(defect)
+    return out
 
 
 def _cluster_for(defect: Defect, clusters: list[FailureCluster]) -> FailureCluster | None:

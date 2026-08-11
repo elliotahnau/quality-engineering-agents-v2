@@ -1,10 +1,63 @@
 """Render the final run outputs: report.md for humans, defects.json for the
-rest of the SDLC (CI gates, issue trackers)."""
+rest of the SDLC (CI gates, issue trackers). Also home of the coverage
+accounting shared with the eval harness."""
 
 import json
+import re
 from pathlib import Path
 
 from qe_agent.state import QEState
+
+
+def _norm_op(text: str) -> str:
+    """'get /campaigns/{campaign_id}/' -> 'GET /campaigns/{id}'."""
+    parts = text.strip().split(None, 1)
+    if len(parts) != 2:
+        return text.strip().upper()
+    method, path = parts
+    path = re.sub(r"\{[^}]*\}", "{id}", path.rstrip("/"))
+    return f"{method.upper()} {path}"
+
+
+def scenario_funnel(state: QEState) -> list[dict]:
+    """Per-scenario fate: a scenario silently losing its test is a coverage
+    hole nobody sees unless it is accounted for explicitly."""
+    plan = state.get("plan")
+    if not plan:
+        return []
+    execution = state.get("execution")
+    generated = {t.scenario_id for t in state.get("generated_tests") or []}
+    rejected = {r["scenario_id"] for r in state.get("rejected_tests") or []}
+    excluded = set(state.get("excluded_scenarios") or [])
+    executed = {r.scenario_id for r in (execution.results if execution else []) if r.scenario_id}
+
+    rows = []
+    for s in plan.scenarios:
+        if s.id in executed:
+            status = "executed"
+        elif s.id in excluded:
+            status = "excluded by reviewer"
+        elif s.id in rejected:
+            status = "rejected by static check"
+        elif s.id in generated:
+            status = "generated, not executed"
+        else:
+            status = "not generated"
+        rows.append({"id": s.id, "title": s.title, "status": status})
+    return rows
+
+
+def operation_coverage(state: QEState) -> tuple[list[str], list[str]]:
+    """(covered, uncovered) spec operations, judged by EXECUTED scenarios —
+    a planned-but-dropped scenario earns no coverage credit."""
+    model = state.get("system_model")
+    plan = state.get("plan")
+    if not model or not plan:
+        return [], []
+    spec_ops = {_norm_op(f"{e.method} {e.path}") for e in model.endpoints}
+    executed = {row["id"] for row in scenario_funnel(state) if row["status"] == "executed"}
+    exercised = {_norm_op(op) for s in plan.scenarios if s.id in executed for op in s.endpoints}
+    return sorted(spec_ops & exercised), sorted(spec_ops - exercised)
 
 
 def render_report(state: QEState) -> str:
@@ -63,6 +116,28 @@ def render_report(state: QEState) -> str:
         for r in rejected:
             lines += [f"  - {r['file_name']}: {'; '.join(r['violations'])}"]
     lines += [""]
+
+    funnel = scenario_funnel(state)
+    if funnel:
+        covered, uncovered = operation_coverage(state)
+        executed_n = sum(1 for row in funnel if row["status"] == "executed")
+        lines += ["## Coverage", ""]
+        if covered or uncovered:
+            lines += [
+                f"- spec operations exercised by executed tests: "
+                f"{len(covered)}/{len(covered) + len(uncovered)}"
+            ]
+            if uncovered:
+                lines += ["- **uncovered operations:**"]
+                lines += [f"  - {op}" for op in uncovered]
+        else:
+            lines += ["- operation coverage unavailable (planner listed no endpoints)"]
+        lines += [f"- scenario funnel: {executed_n}/{len(funnel)} planned scenarios executed"]
+        dropped = [row for row in funnel if row["status"] != "executed"]
+        if dropped:
+            lines += ["- **scenarios that did not run:**"]
+            lines += [f"  - {row['id']} ({row['status']}): {row['title']}" for row in dropped]
+        lines += [""]
 
     if execution:
         passed = sum(1 for r in execution.results if r.final_outcome == "passed")
