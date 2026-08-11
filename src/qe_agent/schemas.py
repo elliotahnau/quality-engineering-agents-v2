@@ -179,7 +179,15 @@ class Defect(BaseModel):
     endpoint: str = Field(description="Affected endpoint, e.g. 'POST /campaigns'")
     scenario_ids: list[str]
     test_ids: list[str]
-    evidence: str = Field(description="Observed vs expected, with repro steps")
+    evidence: str = Field(
+        description=(
+            "Falsifiable repro: the LITERAL request (method, path, and the exact "
+            "JSON payload sent) plus the observed status code/response, against "
+            "the expected behavior with its spec basis. 'Send malformed input' "
+            'is not evidence; \'{"total_budget": true} returned 200, expected '
+            "422' is."
+        )
+    )
     root_cause_hypothesis: str
     suspected_owner: str
     spec_refs: list[str] = Field(

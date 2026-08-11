@@ -38,8 +38,11 @@ in the same order, reusing the given defect ids.
   wrong analytics or reporting numbers -> medium-high; cosmetic -> low.
 - priority: P1 for critical/high real defects, P2 for medium real or noisy
   flaky, P3 otherwise.
-- evidence: 'expected X per the quoted spec rule (or INFERRED invariant),
-  observed Y' plus minimal repro steps.
+- evidence: must be falsifiable by replaying it. Include the LITERAL request
+  (method, path, exact payload — copy it from the failing test in the
+  traceback) and the observed status/response, against 'expected X per the
+  quoted spec rule (or INFERRED invariant)'. Vague phrases like 'with invalid
+  payload' or 'send malformed input' make the defect unactionable.
 - spec_refs: the spec rules or inferred invariants the defect violates.
 - root_cause_hypothesis: this is black-box triage — you have the spec and the
   observed behavior, never the source code. Hypothesize the likely cause class
