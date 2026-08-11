@@ -37,6 +37,11 @@ Hard rules for every generated module:
   assert the resulting state is consistent with the spec.
 - Each test creates its own fresh campaign(s) via POST /campaigns — never
   assume pre-existing data or state from other tests.
+- ONE behavioral probe per test function: a single rule violation (or a
+  single behavior) whose outcome is asserted. Never chain unrelated negative
+  probes in one function — the first failing assert hides every probe after
+  it, and combining two violations in one payload lets the server reject for
+  the wrong reason. Several small test functions per module are fine.
 - Assert the behavior the SPEC requires (status codes AND payload fields),
   not whatever the API happens to do. For INFERRED-basis scenarios, assert the
   inferred invariant and note it in a brief comment.
