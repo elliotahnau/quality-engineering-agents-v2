@@ -250,6 +250,27 @@ def test_review_gate_revise_edit_approve_flow(offline_graph):
     assert result["defects"][0].id == "DEF-001"
 
 
+def test_review_gate_keeps_module_order_across_a_revision(offline_graph):
+    """The reviewer picks tests by number, so a regenerated module has to come
+    back in the slot it left instead of at the bottom of the list — and a model
+    that also returns scenarios nobody asked about must not duplicate the ones
+    being kept."""
+    thread = {"configurable": {"thread_id": "t5"}}
+    result = offline_graph.invoke({}, thread)
+    result = offline_graph.invoke(Command(resume={"AMB-001": "n/a"}), thread)
+
+    before = [f["scenario_id"] for f in result["__interrupt__"][0].value["files"]]
+    assert before == ["TS-001", "TS-002"]
+
+    # the fake generator answers with the whole batch, standing in for a model
+    # that returns more than the single scenario it was asked to redo
+    result = offline_graph.invoke(
+        Command(resume={"action": "revise", "feedback": {"TS-001": "cover zero too"}}), thread
+    )
+    after = [f["scenario_id"] for f in result["__interrupt__"][0].value["files"]]
+    assert after == before
+
+
 def test_review_gate_edited_code_must_pass_static_check(offline_graph):
     thread = {"configurable": {"thread_id": "t3"}}
     result = offline_graph.invoke({}, thread)
