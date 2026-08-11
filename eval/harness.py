@@ -39,6 +39,9 @@ Replay = Callable[[Defect], str]
 @dataclass
 class RunScore:
     detected: set[str] = field(default_factory=set)  # label ids credited
+    # how many defects credited each label; >1 means the same bug was filed
+    # more than once (duplication a human triage lead would have merged)
+    label_credits: dict[str, int] = field(default_factory=dict)
     # (expected kind, predicted classification) counts over matched defects
     confusion: dict[tuple[str, str], int] = field(default_factory=dict)
     correct_classifications: int = 0
@@ -83,6 +86,11 @@ class RunScore:
             return 0.0
         return (len(self.false_positives) + len(self.unverified_claims)) / self.total_defects
 
+    @property
+    def duplicate_filings(self) -> int:
+        """Defects that re-reported a bug another defect already credited."""
+        return sum(n - 1 for n in self.label_credits.values() if n > 1)
+
 
 def _bucket_unmatched(defect: Defect, replay: Replay | None) -> str:
     """Which bucket an unlabeled real/flaky claim belongs in."""
@@ -109,6 +117,8 @@ def score_run(defects: list[Defect], replay: Replay | None = None) -> RunScore:
             continue
         score.matched_defects += 1
         score.detected.update(label.id for label in labels)
+        for label in labels:
+            score.label_credits[label.id] = score.label_credits.get(label.id, 0) + 1
         # a defect may credit several labels; classification is judged against
         # the strictest expectation: real wins over flaky when both match
         expected = "real" if any(lb.kind == "real" for lb in labels) else "flaky"
@@ -210,6 +220,8 @@ def render_results(scores: list[RunScore]) -> str:
         f"- mean confirmed-FP rate: {_mean([s.false_positive_rate for s in scores]):.0%} "
         f"(upper bound incl. unverified: "
         f"{_mean([s.false_positive_rate_upper for s in scores]):.0%})",
+        f"- duplicate filings (same bug credited by >1 defect) per run: "
+        f"{', '.join(str(s.duplicate_filings) for s in scores)}",
     ]
 
     confusion = _pooled_confusion(scores)

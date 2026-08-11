@@ -50,6 +50,12 @@ LABELS: list[Label] = [
         ("404", "500", "unknown", "not found", "keyerror", "non-existent"),
     ),
     Label(
+        "BUG-008",
+        "real",
+        "PATCH /campaigns/{id}/budget",
+        ("coerc", "bool", "true", "string", "non-numeric", "type"),
+    ),
+    Label(
         "FLAKY-001",
         "flaky",
         "POST /campaigns/{id}/resume",

@@ -13,7 +13,7 @@ from datetime import date, timedelta
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # The OpenAPI metadata below (docstrings + Field descriptions) is the intended
 # behavioral contract — the QE agents ground on GET /openapi.json only, never
@@ -74,6 +74,16 @@ class CampaignCreate(BaseModel):
         description="Campaign end date (ISO 8601). Must be the same day as or later than start_date."
     )
 
+    # same lax-coercion gap as BUG-008 (see BudgetPatch); kept unlabeled here
+    # to avoid double-counting one root cause, but the clean SUT must not
+    # carry it — the negative control is supposed to be gap-free.
+    @field_validator("total_budget", "daily_budget", mode="before")
+    @classmethod
+    def _numbers_only_when_clean(cls, value):
+        if _clean() and isinstance(value, (bool, str)):
+            raise ValueError("budget must be a JSON number")
+        return value
+
 
 class BudgetPatch(BaseModel):
     total_budget: float | None = Field(
@@ -82,6 +92,17 @@ class BudgetPatch(BaseModel):
     daily_budget: float | None = Field(
         default=None, description="New daily spend cap. If provided, must be greater than 0."
     )
+
+    # BUG-008: pydantic's lax coercion accepts non-numeric JSON as a budget —
+    # true becomes 1.0, "50" becomes 50.0 — although the spec means numbers.
+    # Found by the QE pipeline itself as an unlabeled gap (eval run 2026-08-11)
+    # and promoted to ground truth. Clean mode enforces the spec.
+    @field_validator("total_budget", "daily_budget", mode="before")
+    @classmethod
+    def _numbers_only_when_clean(cls, value):
+        if _clean() and isinstance(value, (bool, str)):
+            raise ValueError("budget must be a JSON number")
+        return value
 
 
 class ReportRequest(BaseModel):

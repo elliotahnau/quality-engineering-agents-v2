@@ -52,6 +52,10 @@ Rules:
   invariant marked INFERRED. Never invent documentation.
 - Cover every operation with at least one scenario; go deeper on the
   identified risk areas: money handling, state transitions, calculations.
+- List every operation a scenario exercises in its `endpoints` field as
+  'METHOD /path' using the spec's literal paths — operation coverage is
+  computed from this field, so an empty list means the scenario counts
+  toward nothing.
 - Produce a WIDE scenario set (12-16 scenarios) across these categories, at
   least one each: boundary, negative, error_handling (probe for 5xx — any 5xx
   is a defect by convention), state_transition, idempotency, concurrency

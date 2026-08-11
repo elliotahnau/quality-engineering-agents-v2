@@ -71,6 +71,14 @@ class Ambiguity(BaseModel):
 class TestScenario(BaseModel):
     id: str = Field(description="Stable id like TS-001")
     title: str
+    endpoints: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Every operation this scenario exercises, as 'METHOD /path' with the "
+            "spec's literal path (e.g. 'POST /campaigns', "
+            "'GET /campaigns/{campaign_id}/metrics') — coverage is computed from this"
+        ),
+    )
     basis: str = Field(
         description=(
             "What this scenario verifies against: a documented spec rule "

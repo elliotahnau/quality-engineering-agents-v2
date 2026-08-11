@@ -31,6 +31,7 @@ class QEState(TypedDict, total=False):
     revision_round: int
     # review gate outcome
     review_action: Literal["approve", "revise", "edited", "abort"]
+    excluded_scenarios: list[str]  # scenarios the reviewer dropped at the gate
     # execution
     execution: ExecutionReport
     # triage
