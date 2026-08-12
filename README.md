@@ -74,7 +74,9 @@ SUT_BASE_URL=http://127.0.0.1:8000
 Make sure Docker is running, then:
 
 ```bash
-qe run              # HITL
+qe run              # interactive: stops at both HITL gates
+qe run --auto       # non-interactive: accepts the planner's assumptions,
+                    # auto-approves the review gate (used by the eval harness)
 ```
 
 The first invocation builds the `qe-sandbox:latest` image (a couple of minutes,
