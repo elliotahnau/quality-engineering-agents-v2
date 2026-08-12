@@ -76,8 +76,9 @@ def test_labels_stay_in_sync_with_bugs_yaml():
 
 def test_merged_validation_defect_credits_both_bugs():
     defect = make_defect(
-        title="campaign creation accepts invalid input",
-        evidence="daily_budget <= 0 accepted; end_date before start_date accepted (expected 422)",
+        title="campaign creation accepts non-positive daily_budget and end_date before start_date",
+        evidence="see repro",
+        root_cause_hypothesis="missing validation on daily_budget and on the date range",
     )
     assert {lb.id for lb in match_defect(defect)} == {"BUG-001", "BUG-002"}
 
@@ -92,15 +93,44 @@ def test_cpc_and_paused_metrics_are_distinguished():
         endpoint="GET /campaigns/{campaign_id}/metrics",
         title="metrics 500 for paused campaign",
         evidence="expected 200 with ctr 0, observed 500",
+        repro=Repro(
+            method="GET", path="/campaigns/{id}/metrics", expected_status=200, observed_status=500
+        ),
     )
     assert [lb.id for lb in match_defect(cpc)] == ["BUG-003"]
     assert "BUG-004" in [lb.id for lb in match_defect(paused)]
 
 
+def test_spec_quote_in_evidence_does_not_credit_another_bug():
+    """Regression for a real over-credit: the evidence contract quotes the
+    violated spec rule verbatim, and the metrics rule contains 'cpc' — so a
+    paused-500 defect scored a BUG-003 credit although no test had exercised
+    the CPC formula. Keywords must never be matched against evidence or
+    spec_refs, both of which embed spec quotes by design."""
+    paused = make_defect(
+        endpoint="GET /campaigns/{campaign_id}/metrics",
+        title="metrics return 500 when volume is zero",
+        evidence=(
+            "GET metrics returned 500, expected 200 per spec rule: 'ctr = clicks / "
+            "impressions (reported as 0 when impressions is 0); cpc = spend / clicks "
+            "(0 when clicks is 0); roas = revenue / spend'"
+        ),
+        spec_refs=["GET metrics: 'cpc = spend / clicks (0 when clicks is 0)'"],
+        root_cause_hypothesis="unhandled zero division for paused campaigns",
+        repro=Repro(
+            method="GET", path="/campaigns/{id}/metrics", expected_status=200, observed_status=500
+        ),
+    )
+    matched = {lb.id for lb in match_defect(paused)}
+    assert "BUG-003" not in matched
+    assert "BUG-004" in matched
+
+
 def test_score_run_metrics():
     defects = [
         make_defect(  # matches BUG-001, correctly real
-            evidence="daily_budget -1 accepted, expected 422"
+            title="negative daily_budget accepted",
+            evidence="daily_budget -1 accepted, expected 422",
         ),
         make_defect(  # flaky fault reported as real -> classification miss
             id="DEF-002",
@@ -166,7 +196,10 @@ def test_score_run_replay_splits_unmatched_claims():
 def test_score_clean_run_uses_replay_not_labels():
     """Against the clean SUT the labels describe switched-off bugs, so a
     label-matching defect must NOT earn detection credit — replay decides."""
-    looks_like_bug_001 = make_defect(evidence="daily_budget -1 accepted, expected 422")
+    looks_like_bug_001 = make_defect(
+        title="negative daily_budget accepted",
+        evidence="daily_budget -1 accepted, expected 422",
+    )
     genuine_gap = make_defect(id="DEF-002", title="patch coerces bool to budget")
     noise = make_defect(id="DEF-003", title="test asserted wrong shape", classification="test_bug")
     verdicts = {"DEF-001": NOT_REPRODUCED, "DEF-002": REPRODUCED}
@@ -256,10 +289,39 @@ def test_bug_008_type_coercion_matches():
     assert [lb.id for lb in match_defect(defect)] == ["BUG-008"]
 
 
+def test_repro_payload_field_names_do_not_cross_credit_sibling_bugs():
+    """A creation payload names every field (daily_budget, start_date, ...)
+    whichever one is at fault, so the payload is excluded from keyword text —
+    otherwise any POST /campaigns defect with a repro credits BUG-001 and
+    BUG-002 at once."""
+    date_bug = make_defect(
+        title="campaign accepts end_date earlier than start_date",
+        root_cause_hypothesis="missing cross-field date validation",
+        repro=Repro(
+            method="POST",
+            path="/campaigns",
+            payload={
+                "name": "x",
+                "channel": "search",
+                "total_budget": 100.0,
+                "daily_budget": 10.0,
+                "start_date": "2026-01-10",
+                "end_date": "2026-01-01",
+            },
+            expected_status=422,
+            observed_status=201,
+        ),
+    )
+    assert [lb.id for lb in match_defect(date_bug)] == ["BUG-002"]
+
+
 def test_duplicate_filings_are_measured():
     """Two defects crediting the same label = duplication a human lead would
     have merged; counted, not hidden."""
-    first = make_defect(evidence="daily_budget -1 accepted, expected 422")
+    first = make_defect(
+        title="negative daily_budget accepted",
+        evidence="daily_budget -1 accepted, expected 422",
+    )
     second = make_defect(
         id="DEF-002",
         title="zero daily_budget accepted",
