@@ -45,6 +45,11 @@ Hard rules for every generated module:
 - Assert the behavior the SPEC requires (status codes AND payload fields),
   not whatever the API happens to do. For INFERRED-basis scenarios, assert the
   inferred invariant and note it in a brief comment.
+- When the spec defines a field as a formula over other fields in the same
+  response, assert it by RECOMPUTING: read the operands from the response,
+  compute the documented formula, and compare with a tolerance matching the
+  documented rounding (e.g. abs=1e-4 for 4-decimal fields). Never copy the
+  field's own value into the expectation.
 - Any 5xx response is a defect: assert the spec-mandated status explicitly so
   a 5xx shows up as a failure, never as an accepted outcome.
 - Deterministic, self-contained, no sleeps, at most ~80 lines per module.
