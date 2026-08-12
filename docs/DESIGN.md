@@ -312,14 +312,35 @@ scored against the original 7-bug manifest; runs from here on score against
 | after | 6 | 71% (5/7) | BUG-001, 003, 004, 005, 007 | 100% (5/5) | 0% (0/5) |
 | after | 7 | 86% (6/7) | BUG-001, 002, 004, 005, 006, 007 | 75% (6/8) | 0% (0/8) |
 
-Batch means: detection 86% / 75%, classification 95% / 90%, FP 0% / 9%.
-Pooled detection is 7/7 in both.
+Batch means as first scored: detection 86% / 75%, classification 95% / 90%,
+FP 0% / 9%, pooled detection 7/7 in both. **Those detection numbers turned out
+to be inflated — see the second scoring bug below.** Corrected by re-scoring
+every recorded run with the fixed matcher:
+
+| run | as first scored | corrected | spurious credit removed |
+|---|---|---|---|
+| 1 | 71% (5/7) | 71% (5/7) | — |
+| 2 | 86% (6/7) | 71% (5/7) | BUG-003 |
+| 3 | 100% (7/7) | 86% (6/7) | BUG-003 |
+| 4 | 57% (4/7) | 57% (4/7) | — |
+| 5 | 86% (6/7) | 57% (4/7) | BUG-002, BUG-003 |
+| 6 | 71% (5/7) | 57% (4/7) | BUG-003 |
+| 7 | 86% (6/7) | 71% (5/7) | BUG-006 |
+
+Corrected batch means: **76% / 61%**; corrected pooled detection **6/7 and
+5/7**. The correction changes the headline conclusion: `--auto` **never**
+genuinely detected BUG-003 (the inverted CPC formula) in any recorded run —
+every one of its credits came from keyword bleed. The only runs that ever
+found it are the interactive ones, where a reviewer put a formula assertion
+into the generated tests by hand.
 
 **Two interactive sessions, for comparison.** Every row above is `--auto`:
 nobody answers the ambiguity gate. Driving the same pipeline through the
 human path — answering the planner's questions, reviewing the generated code,
-sending scenarios back with feedback — produced **7/7 detection with 100%
-classification both times**, the best runs recorded. The mechanism is
+sending scenarios back with feedback — produced the best runs recorded:
+**7/7 detection in the first session and 7/8 in the second (the eighth being
+a formula bug no scenario covered that run), with 100% classification both
+times**. The mechanism is
 traceable, not vibes: the answer on report-range inclusivity is the oracle
 that finds BUG-006, and in the second session a code review caught a
 generated test that combined two rule violations in one request — the server
@@ -339,17 +360,43 @@ matcher compared method and path as one string, so every defect missed its
 label. The method is now optional in matching, compared only when the defect
 states one, with the symptom keywords keeping same-path labels apart. We
 re-scored all seven runs above with the fixed matcher; all seven had stated
-methods and their numbers are unchanged. The lesson is worth stating plainly:
-a scoring harness reading free-text model output can fail silently and
-produce a confidently wrong number, so a result that looks dramatic deserves
-to be traced back to raw output before it is believed.
+methods and their numbers were unchanged by that fix. The lesson is worth
+stating plainly: a scoring harness reading free-text model output can fail
+silently and produce a confidently wrong number, so a result that looks
+dramatic deserves to be traced back to raw output before it is believed.
 
-- **Pooled detection 7/7.** Every planted bug is found in at least one run;
-  nothing is systematically invisible.
-- **Per-run detection 57–100%** (batch means 75% and 86%). The recurring
-  misses need a second inference step or an answer the spec does not
-  contain — recomputing CPC from a response, or counting report rows against
-  the *undocumented* inclusivity rule.
+**A second scoring bug, in the opposite direction.** The first bug deflated a
+score; this one inflated them. The second interactive session's paused-500
+defect scored a BUG-003 (inverted CPC) credit although no test in that run
+exercised the formula. Cause: the evidence contract quotes the violated spec
+rule verbatim, the quoted metrics rule contains "cpc", and the matcher's
+keyword scan read the whole evidence text — so the very change that made
+evidence actionable poisoned the scorer. Tracing it further showed the same
+bleed in four `--auto` runs (and a cousin: a quoted request body names every
+creation field, cross-crediting sibling bugs on the endpoint). The matcher
+now strips quoted spans from evidence before scanning, excludes `spec_refs`
+and the repro payload entirely, and requires co-occurring terms for labels
+whose keywords are too generic alone. Every recorded run was re-scored; the
+corrected table above is the result, and regression tests pin both failure
+modes. Keyword matching keeps a residual fuzz floor — that is why unmatched
+defects get replayed against the live SUT rather than trusted either way.
+
+- **Corrected pooled detection: 6/7 and 5/7.** One bug was systematically
+  invisible to the autonomous path: BUG-003 requires *recomputing a formula
+  from response fields*, and no `--auto` run ever generated that assertion.
+  Both interactive sessions that found it did so through the review gate.
+  **That gap is now closed the generic way**: the planner and generator
+  gained a derived-value rule — a field the spec defines as a formula over
+  other response fields must be verified by recomputing it, with a tolerance
+  matching the documented rounding. No SUT-specific hint is involved; the
+  rule names an oracle class, not a bug. Three post-change `--auto` runs
+  detected the inverted formula **3/3** (each defect explicitly claims
+  `clicks / spend` was computed instead of `spend / clicks`), against 0/7
+  before.
+- **Corrected per-run detection 57–86%** (batch means 76% and 61%). The
+  recurring misses need a second inference step or an answer the spec does
+  not contain — recomputing CPC from a response, or counting report rows
+  against the *undocumented* inclusivity rule.
 - **Classification accuracy ~90–95%.** Misses are flaky faults called
   `real`.
 - **False positives 0–25% per run.** Every unmatched defect was reproduced by
@@ -422,9 +469,10 @@ agent — the evidence quarantine and this probe landed together, defense and
 measurement in the same change.
 
 **What the numbers do not support.** With three or four runs per batch, the
-86% → 75% difference between batches sits inside the spread of individual
-runs. We report it as indistinguishable rather than as a regression, and say
-what it would take to claim otherwise (roughly ten runs per condition).
+corrected 76% → 61% difference between batches still sits inside the spread
+of individual runs (57–86%). We report it as indistinguishable rather than as
+a regression, and say what it would take to claim otherwise (roughly ten runs
+per condition).
 
 ---
 
@@ -500,6 +548,22 @@ has never seen — which is the first thing below.
    `defects.json` between commits — the eval harness's deterministic matcher
    is already the comparator this needs, and the CI-shaped exit codes are
    already there.
+
+3. **Prompt ops: the eval as an optimization signal (DSPy + GEPA).** The
+   harness already is a fitness function — detection recall, replay-confirmed
+   precision, injection resistance, coverage — and its failure output ("missed
+   BUG-003", "repro refuted", "canary echoed") is exactly the textual feedback
+   reflective prompt evolution consumes. Each stage's hand-written system
+   prompt becomes a candidate that GEPA mutates against those scores, with
+   injection resistance kept as a Pareto objective so the optimizer can never
+   trade the artifact rules away for recall. Scope: an offline loop only —
+   optimized prompt text gets committed with measured before/after, no runtime
+   dependency. The honest precondition is a held-out eval surface: optimizing
+   against one SUT's eight labels would memorize this SUT, not improve QE
+   judgment, so this item depends on the spec-diversity work in item 1. Cost
+   is real (one candidate = one full pipeline run, several per candidate
+   because run variance is measured fact) — which is why a sample-efficient
+   optimizer is the selection criterion in the first place.
 
 ---
 

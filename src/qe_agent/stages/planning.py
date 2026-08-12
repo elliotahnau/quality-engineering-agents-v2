@@ -62,6 +62,11 @@ Rules:
   (simultaneous conflicting operations). Humans miss these; you must not.
 - Risk level = business impact x likelihood of failure, with a concrete
   rationale. Order scenarios by risk (highest first).
+- For any endpoint whose spec documents a derived value — a field defined as
+  a formula over other fields in the same response — include a scenario that
+  verifies the formula by recomputing it from that response. Documented
+  formulas are the cheapest oracles a spec offers; do not leave them
+  unasserted.
 - Every scenario must be executable as a black-box HTTP test (API-level steps,
   expected observable outcomes with status codes).
 - Entry/exit criteria must be concrete and checkable.

@@ -19,12 +19,22 @@ class Label:
     kind: str  # "real" | "flaky"
     endpoint: str
     keywords: tuple[str, ...]  # any-of, matched against lowercased defect text
+    require: tuple[str, ...] = ()  # all-of, for labels whose keywords are too generic alone
 
 
 LABELS: list[Label] = [
     Label("BUG-001", "real", "POST /campaigns", ("daily_budget",)),
     Label("BUG-002", "real", "POST /campaigns", ("end_date", "start_date", "date range")),
-    Label("BUG-003", "real", "GET /campaigns/{id}/metrics", ("cpc",)),
+    Label(
+        # the defect must both name cpc AND claim the formula is wrong: a bare
+        # "cpc" also appears when a zero-division defect enumerates the metric
+        # fields, and a bare "inverted formula" appears in hypotheses about ctr
+        "BUG-003",
+        "real",
+        "GET /campaigns/{id}/metrics",
+        ("inverted", "formula", "incorrect", "wrong", "mismatch", "clicks/spend", "clicks / spend"),
+        require=("cpc",),
+    ),
     Label(
         "BUG-004",
         "real",
@@ -38,10 +48,12 @@ LABELS: list[Label] = [
         ("idempot", "toggle", "status", "reactivat"),
     ),
     Label(
+        # about MISSING ROWS in the report — a bare "end_date" also appears in
+        # unrelated /reports defects (e.g. validation-order claims)
         "BUG-006",
         "real",
         "POST /reports",
-        ("end_date", "row", "inclusive", "excludes", "missing", "off-by-one"),
+        ("row", "inclusive", "excludes", "omits", "off-by-one", "empty", "end date"),
     ),
     Label(
         "BUG-007",
@@ -95,9 +107,32 @@ def normalize_endpoint(endpoint: str) -> str:
 
 
 def defect_text(defect: Defect) -> str:
-    return " ".join(
-        [defect.title, defect.evidence, defect.root_cause_hypothesis, *defect.spec_refs]
-    ).lower()
+    """The text keywords are matched against: title, root cause, and the
+    structured repro.
+
+    Quoted material is the enemy here. The evidence contract requires quoting
+    the violated spec rule verbatim, and a quoted rule carries every keyword
+    of its endpoint — the metrics rule contains "cpc" whether or not the
+    defect is about CPC; a quoted request body names every creation field
+    whichever one is at fault. Scanning those spans credited a formula bug no
+    test had exercised. So:
+
+    - evidence is scanned with quoted spans ('...' and "...") stripped: what
+      remains is the model's own claim, which is exactly the signal.
+    - `spec_refs` (pure spec quotes) and the repro payload (field names of
+      the whole request) are excluded entirely.
+    - the repro's method/path/status codes are included."""
+    evidence = re.sub(r"'[^'\n]{0,400}'", " ", defect.evidence)
+    evidence = re.sub(r'"[^"\n]{0,400}"', " ", evidence)
+    parts = [defect.title, defect.root_cause_hypothesis, evidence]
+    if defect.repro is not None:
+        parts += [
+            defect.repro.method,
+            defect.repro.path,
+            str(defect.repro.expected_status),
+            str(defect.repro.observed_status),
+        ]
+    return " ".join(parts).lower()
 
 
 def match_defect(defect: Defect) -> list[Label]:
@@ -114,6 +149,8 @@ def match_defect(defect: Defect) -> list[Label]:
         if label_path != path:
             continue
         if method is not None and label_method is not None and method != label_method:
+            continue
+        if label.require and not all(term in text for term in label.require):
             continue
         if any(keyword in text for keyword in label.keywords):
             matches.append(label)
